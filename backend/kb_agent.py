@@ -268,7 +268,14 @@ def main():
     print(f"🔄 常驻模式: 监听 {cfg.watch_dir},轮询周期 {cfg.poll_interval}s")
     while True:
         try:
-            check_and_process_jobs(cfg)
+            n = check_and_process_jobs(cfg)
+            # AUTO_PUBLISH=1 且本轮有新内容 → 自动 push (投放即上线)
+            if n > 0 and os.getenv("AUTO_PUBLISH") == "1":
+                print("\n🚀 AUTO_PUBLISH=1, 自动触发 publish.py ...")
+                subprocess.run(
+                    ["python3", "scripts/publish.py", "--no-compile"],
+                    cwd=str(Path(__file__).resolve().parent.parent),
+                )
         except KeyboardInterrupt:
             print("\n👋 守护进程被用户中断,优雅退出")
             break
