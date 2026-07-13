@@ -45,11 +45,11 @@ economist_purifier/
 │   └── 2026-07-11/
 │       └── 标题_art_2026-07-11_001.md
 ├── frontend/
-│   ├── index.html                # 报头 + 封面墙 + 二级下钻 ⭐
 │   ├── database.js               # kb_agent 自动生成
 │   └── assets/
 │       ├── style.css             # 1313 行,暗黑模式 + 响应式
 │       └── app.js                # 路由 + 渲染 + 搜索 + 抽屉
+├── index.html                    # 静态前端入口 (根目录,打开即用)
 └── _regression_test*.py          # 端到端回归测试
 ```
 
@@ -100,9 +100,13 @@ python -m backend.kb_agent
 ### 5. 打开前端
 
 ```bash
-cd frontend && python -m http.server 8000
+# 从项目根目录起服务 (index.html 已在根目录)
+python3 -m http.server 8000
 # 访问 http://localhost:8000
 ```
+
+> ⚠️ 安全提示: 从根目录起服务会暴露 `.env` 等敏感文件。
+> 生产部署建议用 nginx 仅代理 index.html + `frontend/`、`raw/images/`、`output/` 静态目录。
 
 ---
 
@@ -315,7 +319,8 @@ tmux attach -t kb_agent   # 重连
 ### 前端部署
 
 ```bash
-cd frontend && python3 -m http.server 8000
+# index.html 在项目根,直接起服务
+python3 -m http.server 8000
 # 或部署到 Nginx / GitHub Pages / Netlify (database.js 自动随 backend 更新)
 ```
 

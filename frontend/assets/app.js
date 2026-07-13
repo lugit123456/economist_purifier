@@ -110,7 +110,7 @@
 
     function renderCoverCard(issue) {
         const coverRel = issue.issue_cover
-            ? `../${issue.issue_cover}`
+            ? `${issue.issue_cover}`
             : null;
         const articleCount = (issue.articles && issue.articles.length) || 0;
         const dateLabel = formatDate(issue.issue_date);
@@ -233,7 +233,7 @@
         const cartoons = article.cartoon_images || [];
         if (cartoons.length > 0) {
             imagesBox.innerHTML = cartoons.map(p =>
-                `<img src="../${escapeHtml(p)}" alt="${escapeHtml(article.title_zh || article.title)}" loading="lazy">`
+                `<img src="${escapeHtml(p)}" alt="${escapeHtml(article.title_zh || article.title)}" loading="lazy">`
             ).join('');
             banner.hidden = false;
         } else {
@@ -251,7 +251,7 @@
                 const caption = typeof it === 'string' ? '' : (it.caption || '');
                 return `
                     <figure class="indicator-item" data-idx="${idx}">
-                        <img src="../${escapeHtml(path)}"
+                        <img src="${escapeHtml(path)}"
                              alt="${escapeHtml(caption || 'Indicator chart')}"
                              loading="lazy">
                         ${caption ? `<figcaption class="indicator-caption">${escapeHtml(caption)}</figcaption>` : ''}
@@ -310,7 +310,7 @@
         if (!it) return;
         const path = typeof it === 'string' ? it : it.path;
         const caption = typeof it === 'string' ? '' : (it.caption || '');
-        document.getElementById('lightbox-image').src = '../' + path;
+        document.getElementById('lightbox-image').src = path;
         document.getElementById('lightbox-image').alt = caption || 'Indicator';
         document.getElementById('lightbox-caption').textContent = caption;
         document.getElementById('lightbox-counter').textContent =
