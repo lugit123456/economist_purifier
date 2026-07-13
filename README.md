@@ -267,15 +267,41 @@ type Article = {
 
 ## 🚢 部署到 Netlify
 
+### 架构 (已简化)
+
+Netlify **直接 publish 项目根**, 不跑任何 build, 路径完全不动:
+
+```
+项目根 (Netlify publish 根)
+├── index.html             →  https://site.netlify.app/
+├── _redirects             →  挡住 .env / backend / raw / output 等敏感目录
+├── netlify.toml           →  build/publish 配置
+├── frontend/
+│   ├── database.js        →  https://site.netlify.app/frontend/database.js
+│   ├── assets/            →  CSS / JS
+│   └── images/            →  封面 + 漫画 + 指标图
+├── scripts/
+│   ├── kb_agent.py
+│   └── publish.py         →  git push 一键脚本
+└── backend/
+    ├── parser.py
+    └── compiler.py
+```
+
+**index.html 里的 `src="frontend/images/..."` 就是 Netlify 上的最终路径,一字不改**。
+
+敏感目录由 `_redirects` 全部返回 404:
+```
+/.env, /backend/*, /raw/*, /output/*, /scripts/*, /__pycache__/* ...
+```
+
 ### 三种自动化等级
 
-#### Lv.0 — 完全手动(已能用)
+#### Lv.0 — 完全手动
 
 ```bash
 python3 -m backend.kb_agent --once    # 1. 编译
-python3 scripts/build_site.py          # 2. 构建 site/
-git add frontend/database.js frontend/images/ site/
-git commit -m "Add Economist 2026-07-11"
+git add . && git commit -m "..."      # 2. 提交
 git push origin main                   # 3. push → Netlify 自动部署
 ```
 
@@ -285,11 +311,11 @@ git push origin main                   # 3. push → Netlify 自动部署
 python3 scripts/publish.py
 ```
 
-自动跑: **编译 → 构建 → git add → commit → push**,一步到位。
+自动跑: **编译 → git add → commit → push**。
 
 参数:
-- `--no-compile` 跳过编译步骤
-- `--no-push` 只 build + commit, 不 push (本地调试)
+- `--no-compile` 跳过编译
+- `--no-push` 只 commit 不 push
 - `SKIP_COMMIT=1` env 跳过 commit
 
 #### Lv.2 — 全自动(投放即上线)
@@ -299,45 +325,23 @@ python3 scripts/publish.py
 AUTO_PUBLISH=1
 
 python3 -m backend.kb_agent
-# 每 POLL_INTERVAL 秒扫一次 raw/imports/
-# 检测到新 .epub → 编译 → 自动 publish.py → Netlify 部署
-# 你只需要: 投放 .epub, 等 30-60 秒, 打开网站查收
+# daemon 扫到新 .epub → 编译 → 自动 publish.py → Netlify 部署
+# 投放即上线, 零操作
 ```
 
-### 一键构建部署包
+### 首次部署到 Netlify
 
-```bash
-python3 scripts/build_site.py
-```
-
-输出在 `site/` 目录,只包含可公开资源 (`index.html` + `assets/` + `database.js` + `images/`), `.env` / `backend/` / `raw/` / `output/` 都不会被打包。
-
-```
-site/                      ← Netlify publish 根
-├── index.html             (12 KB)
-├── database.js            (740 KB)
-├── assets/
-│   ├── style.css          (33 KB)
-│   └── app.js             (28 KB)
-└── images/                (1.2 MB)
-    ├── cover_2026-07-11.jpg
-    └── 2026-07-11/
-        └── art_..._indicator_*.png
-```
-
-### 部署方式 A: Git 集成(推荐)
-
-1. 代码推到 GitHub/GitLab
+1. 代码推到 GitHub
 2. Netlify 后台 → Add new site → Import from Git → 选仓库
-3. 框架自动识别 `netlify.toml`, 无需手动填配置
-4. 每次 `git push` 自动触发构建 + 部署
+3. **无需填 build command / publish dir**(从 `netlify.toml` 自动读)
+4. Netlify 自动部署项目根
 5. 配合 `AUTO_PUBLISH=1` 实现"投放即上线"
 
-### 部署方式 B: Netlify Drop(零配置)
+### 配置说明
 
-1. 访问 https://app.netlify.com/drop
-2. 把 `site/` 文件夹拖进去
-3. 30 秒拿到一个 `xxx.netlify.app` 域名
+- `netlify.toml` — `publish = "."`, 无 build command, 仅定义缓存 + 安全 headers
+- `_redirects` — 阻挡敏感路径
+- `.gitignore` — `.env` / `raw/` / `output/` 等不入 git
 
 ### 部署方式 C: Netlify CLI
 

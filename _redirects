@@ -1,0 +1,28 @@
+# Netlify _redirects
+# 阻挡项目内的敏感目录, 对外返回 404
+# docs: https://docs.netlify.com/routing/redirects/
+
+# === 安全: 源码 / 配置 / 数据 ===
+/.env                          /.env                          404
+/.env.example                  /.env.example                  404
+/backend/*                     /backend/:splat                404
+/raw/*                         /raw/:splat                    404
+/output/*                      /output/:splat                 404
+/scripts/*                     /scripts/:splat                404
+/__pycache__/*                 /__pycache__/:splat            404
+/_regression_test*             /_regression_test*             404
+/.idea/*                       /.idea/:splat                  404
+/.pytest_cache/*               /.pytest_cache/:splat          404
+/.git/*                        /.git/:splat                   404
+/.vscode/*                     /.vscode/:splat                404
+/requirements.txt              /requirements.txt              404
+/package.json                  /package.json                  404
+/package-lock.json             /package-lock.json             404
+
+# === 静态资源缓存旁路 (Netlify 后台清缓存时不会回源) ===
+# /frontend/assets/* Cache-Control: max-age=31536000 (netlify.toml 已配)
+/frontend/images/*  Cache-Control: max-age=31536000 (netlify.toml 已配)
+
+# === SPA fallback ===
+# 当前是静态站, 不需要 fallback (注释保留, 后续若改 SPA 可启用)
+/*                              /index.html                    200

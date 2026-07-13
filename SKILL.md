@@ -48,9 +48,10 @@ python -m backend.kb_agent
 python3 -m http.server 8000
 # 访问 http://localhost:8000
 
-# 6. 构建 Netlify 部署包
-python3 scripts/build_site.py
-# 输出在 ./site/ 目录,纯静态文件,可直接拖到 Netlify Drop
+# 6. 一键发布
+python3 scripts/publish.py    # compile + commit + push 一条龙 (Netlify 自动部署)
+python3 scripts/publish.py --no-compile   # 跳过编译 (kb_agent 已跑过)
+python3 scripts/publish.py --no-push      # 只 commit, 不 push (本地调试)
 ```
 
 完整文档见 [README.md](./README.md)。
@@ -59,7 +60,7 @@ python3 scripts/build_site.py
 | | |
 |---|---|
 | **输入** | `.env`(LLM 凭据 + 路径 + 并发 + 轮询周期);`raw/imports/*.epub`(用户投放) |
-| **输出** | `frontend/database.js`(自动覆写,前端直接读);`output/{issue_date}/{标题}_{art_id}.md`(每篇研报);`raw/images/{issue_date}/`(封面 + 漫画 + 指标图);`raw/imports/archived/*.epub`(处理完归档) |
+| **输出** | `frontend/database.js`(自动覆写,前端直接读);`frontend/images/`(封面 + 漫画 + 指标图,直接 deploy);`output/{issue_date}/{标题}_{art_id}.md`(每篇研报);`raw/imports/archived/*.epub`(处理完归档) |
 | **运行时长** | 单期 50-75 篇 × 8 路并发 ≈ 5-15 分钟(含 LLM 调用) |
 
 ## 三种编译策略

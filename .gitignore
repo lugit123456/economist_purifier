@@ -27,9 +27,6 @@ output/
 # 一期约 1-3 MB, 50 期/年约 100 MB,完全在 git 可承受范围内
 frontend/images/*
 
-# Netlify 部署构建产物 (在 Netlify 上自动构建, 不进 git)
-site/
-
 # 系统
 .DS_Store
 Thumbs.db
