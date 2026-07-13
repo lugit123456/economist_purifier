@@ -122,8 +122,9 @@ python3 -m http.server 8000
 | `WATCH_DIR` | 监听 .epub 投放目录 | `./raw/imports` |
 | `OUTPUT_DIR` | .md 研报落盘根目录 | `./output` |
 | `DB_FILE` | 前端 database.js 路径 | `./frontend/database.js` |
-| `IMAGE_DIR` | 封面/漫画/图表图持久化目录 | `./raw/images` |
+| `IMAGE_DIR` | 封面/漫画/图表图持久化目录 (默认写到 `frontend/images/` 随 Netlify 部署) | `./frontend/images` |
 | `POLL_INTERVAL` | 守护进程轮询周期 (秒) | `10` |
+| `AUTO_PUBLISH` | `1` = `--once` 编译完自动调 `publish.py` 推送 | 不启用 |
 
 ---
 
@@ -264,65 +265,104 @@ type Article = {
 
 ---
 
-## 🚢 部署方案
+## 🚢 部署到 Netlify
 
-### 方式 1: 后台跑(macOS launchd — 推荐)
+### 三种自动化等级
 
-`~/Library/LaunchAgents/com.economist.kb_agent.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>com.economist.kb_agent</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/luzhe/.pyenv/versions/3.9.18/bin/python3</string>
-        <string>-m</string>
-        <string>backend.kb_agent</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/Users/luzhe/Desktop/code/agent_skills/economist_purifier</string>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/kb_agent.out.log</string>
-    <key>StandardErrorPath</key><string>/tmp/kb_agent.err.log</string>
-</dict>
-</plist>
-```
+#### Lv.0 — 完全手动(已能用)
 
 ```bash
-launchctl load -w ~/Library/LaunchAgents/com.economist.kb_agent.plist
-launchctl list | grep kb_agent   # 查状态
-launchctl unload ~/Library/LaunchAgents/com.economist.kb_agent.plist  # 停止
+python3 -m backend.kb_agent --once    # 1. 编译
+python3 scripts/build_site.py          # 2. 构建 site/
+git add frontend/database.js frontend/images/ site/
+git commit -m "Add Economist 2026-07-11"
+git push origin main                   # 3. push → Netlify 自动部署
 ```
 
-### 方式 2: nohup + & (最简单)
+#### Lv.1 — 一键发布脚本 ⭐ 推荐
 
 ```bash
-nohup python3 -m backend.kb_agent > kb_agent.log 2>&1 &
-echo $! > kb_agent.pid
-tail -f kb_agent.log
-kill $(cat kb_agent.pid)   # 停止
+python3 scripts/publish.py
 ```
 
-### 方式 3: tmux (开发期)
+自动跑: **编译 → 构建 → git add → commit → push**,一步到位。
+
+参数:
+- `--no-compile` 跳过编译步骤
+- `--no-push` 只 build + commit, 不 push (本地调试)
+- `SKIP_COMMIT=1` env 跳过 commit
+
+#### Lv.2 — 全自动(投放即上线)
 
 ```bash
-tmux new -s kb_agent
+# .env 启用
+AUTO_PUBLISH=1
+
 python3 -m backend.kb_agent
-# Ctrl+B 然后 D 脱离
-tmux attach -t kb_agent   # 重连
+# 每 POLL_INTERVAL 秒扫一次 raw/imports/
+# 检测到新 .epub → 编译 → 自动 publish.py → Netlify 部署
+# 你只需要: 投放 .epub, 等 30-60 秒, 打开网站查收
 ```
 
-### 前端部署
+### 一键构建部署包
 
 ```bash
-# index.html 在项目根,直接起服务
-python3 -m http.server 8000
-# 或部署到 Nginx / GitHub Pages / Netlify (database.js 自动随 backend 更新)
+python3 scripts/build_site.py
 ```
+
+输出在 `site/` 目录,只包含可公开资源 (`index.html` + `assets/` + `database.js` + `images/`), `.env` / `backend/` / `raw/` / `output/` 都不会被打包。
+
+```
+site/                      ← Netlify publish 根
+├── index.html             (12 KB)
+├── database.js            (740 KB)
+├── assets/
+│   ├── style.css          (33 KB)
+│   └── app.js             (28 KB)
+└── images/                (1.2 MB)
+    ├── cover_2026-07-11.jpg
+    └── 2026-07-11/
+        └── art_..._indicator_*.png
+```
+
+### 部署方式 A: Git 集成(推荐)
+
+1. 代码推到 GitHub/GitLab
+2. Netlify 后台 → Add new site → Import from Git → 选仓库
+3. 框架自动识别 `netlify.toml`, 无需手动填配置
+4. 每次 `git push` 自动触发构建 + 部署
+5. 配合 `AUTO_PUBLISH=1` 实现"投放即上线"
+
+### 部署方式 B: Netlify Drop(零配置)
+
+1. 访问 https://app.netlify.com/drop
+2. 把 `site/` 文件夹拖进去
+3. 30 秒拿到一个 `xxx.netlify.app` 域名
+
+### 部署方式 C: Netlify CLI
+
+```bash
+npm install -g netlify-cli
+netlify login
+netlify deploy --dir=site --prod
+```
+
+### 本地预览构建产物
+
+```bash
+cd site && python3 -m http.server 8000
+# 访问 http://localhost:8000
+```
+
+> 所有路径在 `site/` 里都是相对根的(`images/...`, `assets/...`),可直接部署到任何静态 CDN。
+
+### 上一节: 本地开发
+
+```bash
+cd frontend && python3 -m http.server 8000   # 本地调试, index.html 在根
+```
+
+> ⚠️ 从根目录起服务会暴露 `.env` 等敏感文件,生产部署建议走 `scripts/build_site.py` 流程。
 
 ---
 

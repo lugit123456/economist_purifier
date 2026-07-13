@@ -1,0 +1,48 @@
+# Netlify 部署配置
+# docs: https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  # 每次部署触发此命令,构建 ./site/ 目录
+  command = "python3 scripts/build_site.py"
+  # Netlify 把这个目录发布到 CDN
+  publish = "site"
+
+[build.environment]
+  # 锁定 Python 版本,确保 Netlify 能识别脚本
+  PYTHON_VERSION = "3.9"
+
+# ============================================================
+# 安全 Headers
+# ============================================================
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(), camera=()"
+
+# ============================================================
+# 静态资源缓存 (一年, immutable)
+# ============================================================
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/images/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# database.js 频繁更新 (新增/修改文章), 缓存时间短
+[[headers]]
+  for = "/database.js"
+  [headers.values]
+    Cache-Control = "public, max-age=300, must-revalidate"
+
+# SPA 路由回退 (虽然这是静态站, 加一层兜底)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

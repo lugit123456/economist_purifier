@@ -13,7 +13,9 @@ economist_purifier 守护进程主入口
 import argparse
 import asyncio
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -254,6 +256,13 @@ def main():
         print("📦 一次性模式启动")
         n = check_and_process_jobs(cfg)
         print(f"🏁 处理完成: {n} 份刊物")
+        # AUTO_PUBLISH=1 时, 编完自动调 publish.py → build_site + git push → Netlify
+        if n > 0 and os.getenv("AUTO_PUBLISH") == "1":
+            print("\n🚀 AUTO_PUBLISH=1, 自动触发 publish.py ...")
+            subprocess.run(
+                ["python3", "scripts/publish.py", "--no-compile"],
+                cwd=str(Path(__file__).resolve().parent.parent),
+            )
         return
 
     print(f"🔄 常驻模式: 监听 {cfg.watch_dir},轮询周期 {cfg.poll_interval}s")

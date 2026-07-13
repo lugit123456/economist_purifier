@@ -44,13 +44,16 @@ python -m backend.kb_agent --once
 # 4. 常驻轮询(服务器)
 python -m backend.kb_agent
 
-# 5. 打开前端
-cd frontend && python -m http.server 8000
+# 5. 打开前端(本地调试)
+python3 -m http.server 8000
 # 访问 http://localhost:8000
+
+# 6. 构建 Netlify 部署包
+python3 scripts/build_site.py
+# 输出在 ./site/ 目录,纯静态文件,可直接拖到 Netlify Drop
 ```
 
 完整文档见 [README.md](./README.md)。
-
 ## 输入 / 输出
 
 | | |
@@ -97,6 +100,15 @@ POLL_INTERVAL=10                # 轮询周期 (秒)
 | `--dry-run` | 解析 + 统计,不调 LLM,不归档 |
 | `--once` | 处理完所有 .epub 后退出 |
 | (无参数) | 常驻轮询,每 `POLL_INTERVAL` 秒一次 |
+| (无参数) + `AUTO_PUBLISH=1` | **投放即上线**: 每期编完自动 `git push` → Netlify 部署 |
+
+### 一键发布 (手动模式)
+
+```bash
+python3 scripts/publish.py    # compile + build + commit + push 一条龙
+python3 scripts/publish.py --no-compile   # 跳过编译 (kb_agent 已跑过)
+python3 scripts/publish.py --no-push      # 只 build + commit (本地调试)
+```
 
 ## 前端特性
 
