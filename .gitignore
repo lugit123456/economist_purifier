@@ -1,0 +1,45 @@
+# 经济学人智库清洗系统 — economist_purifier
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 环境变量 (包含 API Key,严禁提交)
+.env
+.env.local
+
+# 原始数据与产物
+raw/imports/*.epub
+raw/imports/archived/
+output/
+
+# 前端静态图片 (需随 Netlify 部署)
+# 根目录封面图: 提交到 git (部署包自带)
+# 子目录动态图 (漫画/指标): 不提交,运行时 kb_agent 生成
+frontend/images/2026-*/
+frontend/images/*/*
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 日志
+*.log
+
+# 开发态测试脚本 (非生产代码)
+_*.py
+!__init__.py
