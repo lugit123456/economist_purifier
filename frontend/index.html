@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Economist 智库 · The Economist 双语研报库</title>
+    <meta name="description" content="基于原刊 EPUB 解包与 LLM 深度编译的私有双语智库">
+
+    <!-- Google Fonts: 复刻经济学人衬线美感 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+    <!-- ========== 顶部红色报头 ========== -->
+    <header class="masthead">
+        <div class="masthead-inner">
+            <a href="#/" class="masthead-logo">
+                <span class="logo-en">The Economist</span>
+                <span class="logo-divider"></span>
+                <span class="logo-zh">智库</span>
+            </a>
+            <div class="masthead-meta">
+                <span id="masthead-date"></span>
+                <button class="theme-toggle" id="theme-toggle" aria-label="切换主题">
+                    <span class="icon-sun">☀️</span>
+                    <span class="icon-moon">🌙</span>
+                </button>
+                <span class="masthead-tag">双 语 研 报 · 信 达 雅</span>
+            </div>
+        </div>
+        <div class="masthead-rule"></div>
+    </header>
+
+    <!-- ========== View 1: 封面墙 ========== -->
+    <main id="view-wall" class="view view-wall is-active">
+        <section class="wall-hero">
+            <h1 class="wall-title">Weekly Edition Cover Wall</h1>
+            <p class="wall-subtitle">周刊封面墙 · 点击进入双语深度研报</p>
+            <div class="wall-stats">
+                <span class="stat-pill"><b id="stat-issues">0</b> 期</span>
+                <span class="stat-pill"><b id="stat-articles">0</b> 篇文章</span>
+            </div>
+            <div class="wall-search">
+                <span class="search-icon">🔍</span>
+                <input type="search" id="wall-search" class="search-input"
+                       placeholder="按日期搜索 (例如 2026-07)" autocomplete="off">
+                <button class="search-clear" id="wall-search-clear" aria-label="清除" hidden>×</button>
+            </div>
+        </section>
+        <section id="cover-grid" class="cover-grid">
+            <!-- 封面卡片由 JS 注入 -->
+        </section>
+        <div id="empty-state" class="empty-state" hidden>
+            <div class="empty-icon">📭</div>
+            <h2>暂无刊物</h2>
+            <p>请将 <code>.epub</code> 文件放入 <code>raw/imports/</code> 目录,后台守护进程将自动拆解编译。</p>
+        </div>
+    </main>
+
+    <!-- ========== View 2: 二级下钻阅读区 ========== -->
+    <main id="view-issue" class="view view-issue">
+        <div class="issue-toolbar">
+            <button class="btn-back" id="btn-back" aria-label="返回封面墙">
+                <span class="btn-back-icon">←</span>
+                <span>返回封面墙</span>
+            </button>
+            <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="切换文章目录" aria-expanded="false">
+                <span class="mobile-nav-icon">☰</span>
+                <span class="mobile-nav-label">目录</span>
+            </button>
+            <div class="issue-toolbar-meta">
+                <span class="issue-id" id="issue-id-label"></span>
+                <span class="issue-date" id="issue-date-label"></span>
+            </div>
+        </div>
+
+        <div class="issue-body">
+            <!-- 左侧:文章 Section 导航 -->
+            <aside class="section-nav">
+                <div class="section-nav-header">
+                    <span class="section-nav-label">本期目录</span>
+                    <span class="section-nav-count" id="article-count"></span>
+                </div>
+                <div class="section-nav-search">
+                    <span class="search-icon">🔍</span>
+                    <input type="search" id="nav-search" class="search-input"
+                           placeholder="搜索文章标题..." autocomplete="off">
+                    <button class="search-clear" id="nav-search-clear" aria-label="清除" hidden>×</button>
+                </div>
+                <div class="section-nav-empty" id="nav-search-empty" hidden>
+                    <span>🔍</span> 无匹配文章
+                </div>
+                <nav id="article-list" class="article-list">
+                    <!-- 由 JS 按 section 分组注入 -->
+                </nav>
+            </aside>
+
+            <!-- 右侧:双语对照阅读区 -->
+            <section class="article-pane">
+                <!-- 漫画专栏特殊头部 -->
+                <div class="cartoon-banner" id="cartoon-banner" hidden>
+                    <span class="cartoon-tag">🎨 本期漫画</span>
+                    <div class="cartoon-images" id="cartoon-images"></div>
+                </div>
+                <!-- 经济指标图表画廊 -->
+                <div class="indicators-banner" id="indicators-banner" hidden>
+                    <span class="indicators-tag">📊 Economic &amp; Financial Indicators</span>
+                    <p class="indicators-hint">点击图片放大查看</p>
+                    <div class="indicators-gallery" id="indicators-gallery"></div>
+                </div>
+                <div class="article-header" id="article-header">
+                    <span class="article-section" id="current-section"></span>
+                    <h2 class="article-title-zh" id="current-title-zh"></h2>
+                    <h3 class="article-title-en" id="current-title-en"></h3>
+                </div>
+                <div class="article-split">
+                    <div class="split-pane summary-pane">
+                        <div class="pane-header">
+                            <span class="pane-icon">📊</span>
+                            <span class="pane-title">深度研报</span>
+                            <span class="pane-subtitle">LLM 编译</span>
+                        </div>
+                        <article class="pane-body" id="summary-content">
+                            <!-- markdown 渲染 -->
+                        </article>
+                    </div>
+                    <div class="split-divider"></div>
+                    <div class="split-pane raw-pane">
+                        <div class="pane-header">
+                            <span class="pane-icon">📜</span>
+                            <span class="pane-title">纯净原文</span>
+                            <span class="pane-subtitle">English Source</span>
+                        </div>
+                        <article class="pane-body" id="raw-content">
+                            <!-- HTML 原文 -->
+                        </article>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- 悬浮返回按钮 -->
+        <button class="floating-back" id="floating-back" aria-label="返回顶部" title="返回封面墙">
+            <span>↑</span>
+        </button>
+
+        <!-- 移动端目录按钮 (fixed, 始终可见) -->
+        <button class="mobile-nav-fab" id="mobile-nav-fab" aria-label="打开文章目录" aria-expanded="false">
+            <span class="fab-icon">☰</span>
+            <span class="fab-label">目录</span>
+        </button>
+    </main>
+
+    <!-- 图片灯箱 -->
+    <div class="lightbox" id="lightbox" hidden>
+        <button class="lightbox-close" id="lightbox-close" aria-label="关闭">×</button>
+        <button class="lightbox-prev" id="lightbox-prev" aria-label="上一张">‹</button>
+        <button class="lightbox-next" id="lightbox-next" aria-label="下一张">›</button>
+        <img class="lightbox-image" id="lightbox-image" src="" alt="">
+        <div class="lightbox-caption" id="lightbox-caption"></div>
+        <div class="lightbox-counter" id="lightbox-counter"></div>
+    </div>
+
+    <!-- ========== Footer ========== -->
+    <footer class="site-footer">
+        <span>© <span id="footer-year"></span> economist_purifier · 私有双语智库系统</span>
+        <span class="footer-tech">Powered by EPUB Parser + LLM Pipeline</span>
+    </footer>
+
+    <!-- marked.js (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+
+    <!-- 数据库 (由 kb_agent 自动生成) -->
+    <script src="database.js"></script>
+
+    <!-- 应用逻辑 -->
+    <script src="assets/app.js"></script>
+</body>
+</html>

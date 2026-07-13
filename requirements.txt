@@ -1,0 +1,6 @@
+# 核心依赖
+openai>=1.40.0          # 异步 OpenAI 兼容 SDK
+python-dotenv>=1.0.0     # .env 配置加载
+beautifulsoup4>=4.12.0   # EPUB XHTML/OPF 解析
+lxml>=5.0.0              # 高速 XML/HTML 解析器
+pydantic>=2.6.0          # 编译结果结构化校验
