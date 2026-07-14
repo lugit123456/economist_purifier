@@ -79,7 +79,7 @@ _SKIP_SECTION_NAMES = {
 
 # 快讯分类: 只有 Politics / Business 走 "忠实中文翻译" 分支 (不做解读)
 # summary_md = content_raw 的中文翻译
-# 其余板块 (Asia/China/Europe/Finance/Briefing 等) 仍走 4 段式深度研报
+# 其余板块 (Asia/China/Europe/Finance/Briefing 等) 仍走 4 段式中文解读
 _NEWS_CATEGORIES = {
     "politics", "business",
 }
@@ -654,7 +654,7 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
                 if indicator_images:
                     print(f"  📊 {art_id} indicators 板块, 提取 {len(indicator_images)} 张图表")
 
-            # 分类: news (快讯, 只译标题) vs analysis (深度研报)
+            # 分类: news (快讯, 只译标题) vs analysis (中文解读)
             # indicators 板块强制归 news (图片本身就是内容, 不需要解读)
             if section == "Indicators":
                 category = "news"
@@ -671,7 +671,7 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
                 "title": title_eng,
                 "title_zh": f"【大模型编译中】{title_eng}",
                 "url": f"https://www.economist.com/node/{issue_date}/{art_counter}",
-                "summary_md": "### 编译中...\n正在请求 LLM 集群进行深度研报编译,请稍候。",
+                "summary_md": "### 编译中...\n正在请求 LLM 集群进行中文解读编译,请稍候。",
                 "content_raw": cleaned_text,
             }
             if cartoon_images:

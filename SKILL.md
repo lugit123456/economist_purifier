@@ -16,7 +16,7 @@ description: |
 
 - 想把某期或某几期《经济学人》周刊自动入库为本地双语知识库
 - 想验证 .epub 实际含多少篇文章,确认解析覆盖率
-- Politics/Business 板块不想展开深度研报,只想翻译标题+保留原文
+- Politics/Business 板块不想展开中文解读,只想翻译标题+保留原文
 - 想让 Cartoon / Indicators 板块的图自动下载并可在前端灯箱预览
 - 想 PC + 手机都能看,带暗黑模式,支持全文搜索
 - 想后台常驻轮询,新一期投放即自动处理
@@ -67,7 +67,7 @@ python3 scripts/publish.py --no-push      # 只 commit, 不 push (本地调试)
 
 | 类别 | 板块 | 行为 |
 |------|------|------|
-| `analysis` | Leaders / Briefing / Asia / China / Europe 等 | 4 段式深度研报(一句话主旨 / 观点拆解 / 争议挑战 / 未来趋势) |
+| `analysis` | Leaders / Briefing / Asia / China / Europe 等 | 4 段式中文解读(一句话主旨 / 观点拆解 / 争议挑战 / 未来趋势) |
 | `news` | Politics / Business | 忠实中文翻译全文(降级:仅翻译标题) |
 | `cartoon` | Cartoon 板块 | 抽取漫画图,前端 banner 展示 |
 | `indicators` | Economic & financial indicators | 抽取所有图表 + caption,前端画廊 + 灯箱 |

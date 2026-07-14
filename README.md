@@ -146,7 +146,7 @@ python3 -m http.server 8000
 │  • 识别:Cartoon → 提取漫画图                       │
 │  • 识别:Indicators → 提取所有图表图                │
 │  • 分类:Politics/Business → news(快讯)             │
-│          其他板块 → analysis(深度研报)             │
+│          其他板块 → analysis(中文解读)             │
 └────────┬─────────────────────────────────────────┘
          │ 标准化 issue_data
          ↓
@@ -157,7 +157,7 @@ python3 -m http.server 8000
 │      → NEWS_TRANSLATION_PROMPT 忠实中文翻译         │
 │      → 失败自动降级到 _translate_title_only          │
 │  • analysis 类 (其他板块):                         │
-│      → SYSTEM_PROMPT 4 段式深度研报                │
+│      → SYSTEM_PROMPT 4 段式中文解读                │
 │  • 三级错误处理:                                    │
 │      1) 瞬时错误(timeout/限流) → 重试 3 次          │
 │      2) 永久错误(422/JSON) → 跳过重试直接降级        │
@@ -209,7 +209,7 @@ type Article = {
 
 ## 📝 三种编译产出
 
-### analysis 类(深度研报) — 4 段式
+### analysis 类(中文解读) — 4 段式
 
 ```markdown
 ### 🌟 一句话核心主旨

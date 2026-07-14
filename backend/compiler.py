@@ -293,7 +293,7 @@ class EconomistCompiler:
 
         根据 article["category"] 分支:
         - "news" (快讯: Politics/Business/Europe 等): 只译标题, summary_md 设占位
-        - "analysis" (默认): 全量 4 段式深度研报
+        - "analysis" (默认): 全量 4 段式中文解读
         """
         is_news = article.get("category") == "news"
         title_eng = article.get("title", "Untitled")
@@ -310,7 +310,7 @@ class EconomistCompiler:
             user_prompt = NEWS_TRANSLATION_PROMPT.format(title=title_eng, content=content)
             system_prompt = "你是专业英中翻译,信达雅即可,仅输出 JSON。"
         else:
-            # 深度研报模式: 4 段式分析
+            # 中文解读模式: 4 段式分析
             user_prompt = USER_PROMPT_TEMPLATE.format(
                 issue_date=issue_date,
                 section=section,
@@ -346,7 +346,7 @@ class EconomistCompiler:
         title_zh = data.get("title_zh", title_eng)
 
         if is_news:
-            # summary_md = 忠实中文译文 (供左侧"深度研报"面板展示)
+            # summary_md = 忠实中文译文 (供左侧"中文解读"面板展示)
             # 失败兜底: 用英文原文 (LLM 拒答时仍能展示原文, 不会断)
             translation = data.get("summary_md", "")
             if not translation or "编译失败" in translation:
@@ -496,7 +496,7 @@ class EconomistCompiler:
             return issue_data
 
         print(f"  🚀 启动 {self.concurrency} 路并发,"
-              f"编译 {len(articles)} 篇深度研报…")
+              f"编译 {len(articles)} 篇中文解读…")
 
         start = time.time()
         tasks = [
@@ -584,7 +584,7 @@ class EconomistCompiler:
 
 ---
 
-## 📊 深度研报
+## 📊 中文解读
 
 {summary}
 {cartoon_block}
