@@ -27,9 +27,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from backend.parser import extract_and_parse_epub
     from backend.compiler import EconomistCompiler
+    from backend.state_db import StateDB, compute_sha256, infer_issue_id_from_filename
 else:
     from .parser import extract_and_parse_epub
     from .compiler import EconomistCompiler
+    from .state_db import StateDB, compute_sha256, infer_issue_id_from_filename
 
 
 # ---------- 配置加载 ----------
@@ -57,6 +59,7 @@ class Config:
         # 路径
         self.base = Path(__file__).resolve().parent.parent
         self.watch_dir = Path(os.getenv("WATCH_DIR", "./raw/imports")).resolve()
+        # ★ 兼容旧版: archived/ 不再自动写入,但保留路径供迁移使用
         self.archive_dir = self.watch_dir / "archived"
         self.image_dir = Path(os.getenv("IMAGE_DIR", "./raw/images")).resolve()
         # ★ 图片目录的项目根相对路径,用于写入 database.js 时保持 IMAGE_DIR 一致
@@ -69,6 +72,11 @@ class Config:
             self.image_dir_rel = str(self.image_dir)
         self.output_dir = Path(os.getenv("OUTPUT_DIR", "./output")).resolve()
         self.db_file = Path(os.getenv("DB_FILE", "./frontend/database.js")).resolve()
+        # ★ 处理记录库 (SQLite),记录已处理 EPUB 的 sha256 + 元数据
+        #   默认与 database.js 同目录,Netlify 部署时一并带走
+        self.state_db_path = Path(
+            os.getenv("STATE_DB_FILE", "./frontend/state.db")
+        ).resolve()
 
         # 调度
         self.poll_interval: int = int(os.getenv("POLL_INTERVAL", "10"))
@@ -77,9 +85,10 @@ class Config:
         self._validate()
 
         # 确保所有目录存在
-        for d in (self.watch_dir, self.archive_dir,
-                  self.image_dir, self.output_dir, self.db_file.parent):
+        for d in (self.watch_dir, self.image_dir, self.output_dir, self.db_file.parent):
             d.mkdir(parents=True, exist_ok=True)
+        # archived/ 仅作历史兼容,不再自动写入;不强制创建
+        self.state_db = StateDB(self.state_db_path)
 
     def _validate(self):
         if not self.openai_api_key:
@@ -97,7 +106,8 @@ class Config:
             f"  - 图片目录 (绝对): {self.image_dir}\n"
             f"  - 图片目录 (相对): {self.image_dir_rel}\n"
             f"  - 输出: {self.output_dir}\n"
-            f"  - 数据库: {self.db_file}"
+            f"  - 数据库: {self.db_file}\n"
+            f"  - 处理记录: {self.state_db_path} (已记录 {self.state_db.count()} 个)"
         )
 
 
@@ -196,12 +206,22 @@ def bake_into_local_database(db_file: Path, new_issue_data: dict,
 
 async def process_single_epub(epub_path: Path, cfg: Config,
                               compiler: EconomistCompiler,
-                              dry_run: bool = False) -> bool:
-    """处理单份 EPUB: 拆解 → 编译 → 落盘 → 回写
+                              dry_run: bool = False,
+                              force: bool = False) -> bool:
+    """处理单份 EPUB: 去重检查 → 拆解 → 编译 → 落盘 → 回写 → 入库
 
-    dry_run=True: 仅解析, 打印统计, 不调 LLM, 不落盘, 不归档
+    dry_run=True: 仅解析, 打印统计, 不调 LLM, 不落盘, 不入库
+    force=True:  忽略 state.db 去重 (用于 --reprocess 或 --force)
     """
     try:
+        # Step 0: 内容指纹去重 (用 sha256,改一字节也算新文件)
+        sha = compute_sha256(epub_path)
+        if not force and cfg.state_db.is_processed(sha):
+            rec = cfg.state_db.get_by_sha(sha)
+            print(f"  ⏭️  {epub_path.name} 已处理过 (issue={rec.get('issue_id')}, "
+                  f"at={rec.get('processed_at'):.0f}), 跳过 [use --force 强制重跑]")
+            return True  # 算成功 (没失败),让主循环继续
+
         # Step 1: EPUB 极速解包 (dry_run 也需要这一步)
         raw_issue_data = extract_and_parse_epub(
             epub_path, image_dir=cfg.image_dir,
@@ -214,7 +234,7 @@ async def process_single_epub(epub_path: Path, cfg: Config,
             cat_counts = Counter(a.get("category", "?") for a in raw_issue_data["articles"])
             print(f"  🧪 [DRY-RUN] {epub_path.name} → {len(raw_issue_data['articles'])} 篇")
             print(f"     category 分布: {dict(cat_counts)}")
-            # 不归档, 留待正式跑
+            # dry-run 不入库,留待正式跑
             return True
 
         # Step 1.5: 拆出 paragraphs 块 (供 compiler 逐段翻译, 必须在编译前准备好)
@@ -233,12 +253,14 @@ async def process_single_epub(epub_path: Path, cfg: Config,
         bake_into_local_database(cfg.db_file, compiled_issue_data,
                                   ensure_paragraphs_flag=False)
 
-        # Step 5: 归档原始 EPUB
-        archive_path = cfg.archive_dir / epub_path.name
-        if archive_path.exists():
-            archive_path.unlink()
-        epub_path.rename(archive_path)
-        print(f"  ✅ {epub_path.name} 完整智库编译流程成功闭环")
+        # Step 5: 入处理记录库 (成功后入库;失败不污染 DB,下次重试)
+        cfg.state_db.mark_processed(
+            sha256=sha,
+            filename=epub_path.name,
+            size=epub_path.stat().st_size,
+            issue_id=compiled_issue_data.get("issue_id", "unknown"),
+        )
+        print(f"  ✅ {epub_path.name} 处理闭环, 已记录到 state.db")
         return True
 
     except Exception as e:
@@ -248,7 +270,8 @@ async def process_single_epub(epub_path: Path, cfg: Config,
         return False
 
 
-def check_and_process_jobs(cfg: Config, dry_run: bool = False) -> int:
+def check_and_process_jobs(cfg: Config, dry_run: bool = False,
+                           force: bool = False) -> int:
     """
     守护进程单次轮询入口
 
@@ -256,13 +279,15 @@ def check_and_process_jobs(cfg: Config, dry_run: bool = False) -> int:
     因为 compiler 内部的 Semaphore 和 httpx 连接池会绑定到
     创建时的 event loop,而本函数每次用 asyncio.run() 创建新 loop。
     跨 loop 复用会导致 "attached to a different loop" 错误。
+
+    force=True: 忽略 state.db 去重, 强制重新处理每个 EPUB
     """
     epub_files = sorted(cfg.watch_dir.glob("*.epub"))
     if not epub_files:
         return 0
 
     if dry_run:
-        print(f"  🧪 [DRY-RUN] 仅统计数量, 不调 LLM, 不归档")
+        print(f"  🧪 [DRY-RUN] 仅统计数量, 不调 LLM, 不入库")
         for epub in epub_files:
             try:
                 issue = extract_and_parse_epub(epub, image_dir=cfg.image_dir,
@@ -276,7 +301,10 @@ def check_and_process_jobs(cfg: Config, dry_run: bool = False) -> int:
                 print(f"  ❌ {epub.name} 解析失败: {e}")
         return len(epub_files)
 
-    print(f"  🔔 守护进程捕获到 {len(epub_files)} 份新刊物,启动流水线…")
+    if force:
+        print(f"  🔔 守护进程捕获到 {len(epub_files)} 份 EPUB, --force 模式: 忽略去重, 强制处理…")
+    else:
+        print(f"  🔔 守护进程捕获到 {len(epub_files)} 份 EPUB, 启动流水线…")
 
     async def process_all():
         compiler = EconomistCompiler(
@@ -290,7 +318,7 @@ def check_and_process_jobs(cfg: Config, dry_run: bool = False) -> int:
         try:
             success = 0
             for epub in epub_files:
-                if await process_single_epub(epub, cfg, compiler):
+                if await process_single_epub(epub, cfg, compiler, force=force):
                     success += 1
             return success
         finally:
@@ -300,6 +328,66 @@ def check_and_process_jobs(cfg: Config, dry_run: bool = False) -> int:
 
 
 # ---------- 主入口 ----------
+
+def _auto_migrate(cfg: Config) -> None:
+    """首次启动时,从 archived/*.epub 自动迁移历史记录到 state.db
+
+    - 仅在 state.db 为空时执行 (避免重复导入)
+    - 用文件 mtime 作为 processed_at,审计更接近历史
+    """
+    if cfg.state_db.count() > 0:
+        return
+    if not cfg.archive_dir.exists():
+        return
+    archived_epubs = list(cfg.archive_dir.glob("*.epub"))
+    if not archived_epubs:
+        return
+    print(f"🔄 检测到 archived/ 里有 {len(archived_epubs)} 份历史 EPUB, 自动迁移到 state.db…")
+    n = cfg.state_db.import_from_archived(cfg.archive_dir)
+    print(f"   迁移完成: 新增 {n} 条 (已存在的 sha256 已跳过)")
+
+
+def cmd_status(cfg: Config) -> None:
+    """打印 state.db 全部记录 + 当前 WATCH_DIR 待处理文件"""
+    print("=" * 72)
+    print(f"📊 处理记录库: {cfg.state_db_path}")
+    print(f"   共 {cfg.state_db.count()} 条记录")
+    print("=" * 72)
+    for rec in cfg.state_db.list_all():
+        import datetime as _dt
+        ts = _dt.datetime.fromtimestamp(rec["processed_at"]).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"  ✅ {rec['issue_id']:<22} {rec['filename']:<48} {ts}")
+    print("-" * 72)
+    pending = sorted(cfg.watch_dir.glob("*.epub"))
+    if pending:
+        print(f"⏳ 待处理 (WATCH_DIR,共 {len(pending)} 份):")
+        for epub in pending:
+            # 查 sha256 是否已处理 (避免无谓的 IO)
+            sha = compute_sha256(epub)
+            if cfg.state_db.is_processed(sha):
+                print(f"  ⏭️  {epub.name}  (sha256 已入库, 会被跳过)")
+            else:
+                print(f"  📥 {epub.name}  (新文件, 会触发编译)")
+    else:
+        print("⏳ 待处理: 无")
+    print("=" * 72)
+
+
+def cmd_reset_db(cfg: Config) -> None:
+    """清空 state.db (强制重新处理所有 EPUB)"""
+    n = cfg.state_db.count()
+    cfg.state_db.reset()
+    print(f"🗑️  state.db 已清空 (删除了 {n} 条记录)")
+
+
+def cmd_reprocess(cfg: Config, issue_id: str) -> None:
+    """按 issue_id 删除记录, 让下一次轮询重新处理该期"""
+    n = cfg.state_db.remove_by_issue(issue_id)
+    if n:
+        print(f"♻️  已删除 issue_id={issue_id} 的 {n} 条记录, 下次轮询会重新处理")
+    else:
+        print(f"⚠️  state.db 中没有 issue_id={issue_id} 的记录")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -311,7 +399,25 @@ def main():
     )
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="干跑模式: 只解析不编译, 打印文章数量/板块/分类, 不调 LLM, 不归档",
+        help="干跑模式: 只解析不编译, 打印文章数量/板块/分类, 不调 LLM, 不入库",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="强制模式: 忽略 state.db 去重, 重跑所有 EPUB (用于 schema 升级后批量重处理)",
+    )
+    # 互斥的运维子命令 (只能选一个, 与 --once/--dry-run/--force 互斥)
+    ops = parser.add_mutually_exclusive_group()
+    ops.add_argument(
+        "--status", action="store_true",
+        help="查看 state.db 全部记录 + WATCH_DIR 待处理文件",
+    )
+    ops.add_argument(
+        "--reset-db", action="store_true",
+        help="清空 state.db (后续轮询会重新处理所有 EPUB)",
+    )
+    ops.add_argument(
+        "--reprocess", metavar="ISSUE_ID",
+        help="按 issue_id 删除记录, 例: --reprocess issue_2026-07-11",
     )
     args = parser.parse_args()
 
@@ -319,9 +425,24 @@ def main():
     cfg = Config()
     print(cfg.summary())
 
+    # ---------- 运维子命令 (不需要 API key, 不进入编译流程) ----------
+    if args.status:
+        cmd_status(cfg)
+        return
+    if args.reset_db:
+        cmd_reset_db(cfg)
+        return
+    if args.reprocess:
+        cmd_reprocess(cfg, args.reprocess)
+        return
+
+    # ---------- 编译流程 (需要 API key,除非 --dry-run) ----------
     if not cfg.openai_api_key and not args.dry_run:
         print("❌ 未配置 OPENAI_API_KEY,无法启动 LLM 编译")
         sys.exit(1)
+
+    # 首次启动自动迁移 archived/* → state.db
+    _auto_migrate(cfg)
 
     if args.dry_run:
         print("🧪 干跑模式 (dry-run): 仅统计, 不消耗 API")
@@ -331,7 +452,7 @@ def main():
 
     if args.once:
         print("📦 一次性模式启动")
-        n = check_and_process_jobs(cfg)
+        n = check_and_process_jobs(cfg, force=args.force)
         print(f"🏁 处理完成: {n} 份刊物")
         # AUTO_PUBLISH=1 时, 编完自动调 publish.py → build_site + git push → Netlify
         if n > 0 and os.getenv("AUTO_PUBLISH") == "1":
@@ -345,7 +466,7 @@ def main():
     print(f"🔄 常驻模式: 监听 {cfg.watch_dir},轮询周期 {cfg.poll_interval}s")
     while True:
         try:
-            n = check_and_process_jobs(cfg)
+            n = check_and_process_jobs(cfg, force=args.force)
             # AUTO_PUBLISH=1 且本轮有新内容 → 自动 push (投放即上线)
             if n > 0 and os.getenv("AUTO_PUBLISH") == "1":
                 print("\n🚀 AUTO_PUBLISH=1, 自动触发 publish.py ...")
