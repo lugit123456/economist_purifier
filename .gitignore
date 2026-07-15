@@ -22,6 +22,11 @@ raw/imports/*.epub
 raw/imports/archived/
 output/
 
+# SQLite 处理记录库 (运行时自动生成,避免多人/多机冲突)
+frontend/state.db
+frontend/state.db-shm
+frontend/state.db-wal
+
 # 前端静态图片 - 全部跟踪 (需随 Netlify 部署,否则 deploy 时 404)
 # 包括根目录封面图 (cover_*.jpg) 和子目录动态图 (cartoon/indicator)
 # 一期约 1-3 MB, 50 期/年约 100 MB,完全在 git 可承受范围内

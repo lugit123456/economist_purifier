@@ -36,22 +36,27 @@ economist_purifier/
 │   ├── __init__.py
 │   ├── parser.py                 # EPUB 解包 + NCX 章节提取 + 漫画/图表识别 ⭐
 │   ├── compiler.py               # asyncio + AsyncOpenAI 并发编译引擎 ⭐
+│   ├── state_db.py               # SQLite 处理记录库 (sha256 去重) ⭐
 │   └── kb_agent.py               # 常驻 Daemon + .env 加载 + 调度 ⭐
 ├── raw/
-│   ├── imports/                  # 📥 投入 .epub,处理后自动归档到 archived/
-│   │   └── archived/
+│   ├── imports/                  # 📥 投放箱 — 投入 .epub 后**留在原位**,不再移动
+│   │   └── archived/             # 🗄 历史归档(首次启动会自动迁移到 state.db,之后不再使用)
 │   └── images/                   # 📸 封面图 + 漫画图 + 指标图表
 ├── output/                       # 📝 .md 研报落盘根目录 (OUTPUT_DIR)
 │   └── 2026-07-11/
 │       └── 标题_art_2026-07-11_001.md
 ├── frontend/
 │   ├── database.js               # kb_agent 自动生成
+│   ├── state.db                  # 🗂 SQLite: 已处理 EPUB 的 sha256 + 元数据(去重)
 │   └── assets/
-│       ├── style.css             # 1313 行,暗黑模式 + 响应式
+│       ├── style.css             # 暗黑模式 + 响应式
 │       └── app.js                # 路由 + 渲染 + 搜索 + 抽屉
 ├── index.html                    # 静态前端入口 (根目录,打开即用)
 └── _regression_test*.py          # 端到端回归测试
 ```
+
+> 💡 **Drop box 语义**:`raw/imports/` 现在是纯粹的"投放箱",文件**不会被移动或修改**。
+> 重复投放同一份 EPUB,系统会通过 `state.db` 里的 sha256 自动跳过,不再浪费 LLM 调用。
 
 ---
 
@@ -119,10 +124,11 @@ python3 -m http.server 8000
 | `OPENAI_MODEL` | 模型名 | `gpt-4o-mini` |
 | `OPENAI_USE_JSON_FORMAT` | 端点不支持 `response_format=json_object` 时设为 `false` | `true` |
 | `LLM_CONCURRENCY` | 单期文章并发上限 | `8` |
-| `WATCH_DIR` | 监听 .epub 投放目录 | `./raw/imports` |
+| `WATCH_DIR` | 监听 .epub 投放目录 (**Drop box,文件不会被移动**) | `./raw/imports` |
 | `OUTPUT_DIR` | .md 研报落盘根目录 | `./output` |
 | `DB_FILE` | 前端 database.js 路径 | `./frontend/database.js` |
 | `IMAGE_DIR` | 封面/漫画/图表图持久化目录 (默认写到 `frontend/images/` 随 Netlify 部署) | `./frontend/images` |
+| `STATE_DB_FILE` | SQLite 处理记录库路径 (sha256 去重) | `./frontend/state.db` |
 | `POLL_INTERVAL` | 守护进程轮询周期 (秒) | `10` |
 | `AUTO_PUBLISH` | `1` = `--once` 编译完自动调 `publish.py` 推送 | 不启用 |
 
@@ -370,13 +376,48 @@ cd frontend && python3 -m http.server 8000   # 本地调试, index.html 在根
 
 ---
 
-## 🧪 三种运行模式
+## 🧪 CLI 速查
+
+### 编译主命令
 
 | 命令 | 行为 | 适用场景 |
 |------|------|----------|
-| `--dry-run` | 解析 + 统计,不调 LLM,不归档 | 数量验证,API 配额保护 |
-| `--once` | 处理完所有 .epub 后退出 | CI / 一次性补抓 |
+| `--dry-run` | 解析 + 统计,不调 LLM,不入库 | 数量验证,API 配额保护 |
+| `--once` | 处理完所有 .epub 后退出(自动去重) | CI / 一次性补抓 |
+| `--once --force` | 忽略 state.db 去重,强制重新处理 | schema 升级后批量重跑 |
 | (无参数) | 常驻轮询,每 `POLL_INTERVAL` 秒扫一次 | 服务器/开发监听 |
+| (无参数) + `AUTO_PUBLISH=1` | **投放即上线**: 每期编完自动 `git push` → Netlify 部署 | 生产 |
+
+### 运维子命令 (不需要 API key)
+
+| 命令 | 行为 |
+|------|------|
+| `--status` | 列出 state.db 全部记录 + WATCH_DIR 待处理文件 (标注哪些会被跳过) |
+| `--reset-db` | 清空 state.db (下次轮询会重新处理所有 EPUB) |
+| `--reprocess ISSUE_ID` | 按 `issue_id` 删除记录, 例: `--reprocess issue_2026-07-11` |
+
+### 示例: 查看处理状态
+```bash
+$ python -m backend.kb_agent --status
+========================================================================
+📊 处理记录库: .../frontend/state.db
+   共 3 条记录
+========================================================================
+  ✅ issue_2026-06-27       TheEconomist.2026.06.27.epub    2026-07-13 21:13
+  ✅ issue_2026-07-04       TheEconomist.2026.07.04.epub    2026-07-13 20:19
+  ✅ issue_2026-07-11       TheEconomist.2026.07.11.epub    2026-07-13 11:21
+------------------------------------------------------------------------
+⏳ 待处理 (WATCH_DIR,共 1 份):
+  ⏭️  TheEconomist.2026.07.11.epub  (sha256 已入库, 会被跳过)
+========================================================================
+```
+
+### 一键发布 (手动模式)
+```bash
+python3 scripts/publish.py                # compile + build + commit + push 一条龙
+python3 scripts/publish.py --no-compile   # 跳过编译 (kb_agent 已跑过)
+python3 scripts/publish.py --no-push      # 只 build + commit (本地调试)
+```
 
 ---
 
@@ -434,7 +475,29 @@ A: 若端点支持 `response_format={"type":"json_object"}` 设为 `true`(默认
 
 **Q: 怎么完全重跑某一期?**
 
-A: 把归档的 .epub 移回 `raw/imports/`,运行 `--once`。`bake_into_local_database` 会按 `issue_id` 去重覆盖。
+A: 用 `--reprocess`:
+```bash
+python -m backend.kb_agent --reprocess issue_2026-07-11
+python -m backend.kb_agent --once          # 重新处理
+```
+
+或者全清重来: `--reset-db` + `--once --force`。
+
+**Q: 投放的 .epub 怎么没自动归档了?**
+
+A: 现在的设计是 **drop box 语义**:文件留在 `raw/imports/` 不动,处理状态记在 `frontend/state.db`(SQLite)。
+重复投放同一份 EPUB,系统会通过 sha256 自动跳过(不再调 LLM)。查看状态:
+```bash
+python -m backend.kb_agent --status
+```
+
+**Q: 怎么处理过的 EPUB 在 WATCH_DIR 越积越多?**
+
+A: 当前不自动清理。手动方案:
+```bash
+rm raw/imports/TheEconomist.2026.07.11.epub     # 删旧的不影响 state.db
+```
+需要自动清理的话可以加 `WATCH_RETENTION_DAYS` 配置,让我加上。
 
 ---
 

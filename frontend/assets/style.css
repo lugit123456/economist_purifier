@@ -113,7 +113,7 @@ img { max-width: 100%; display: block; }
 }
 
 .masthead-inner {
-    max-width: 1320px;
+    max-width: 1600px;
     margin: 0 auto;
     padding: 14px 24px;
     display: flex;
@@ -208,7 +208,7 @@ img { max-width: 100%; display: block; }
 
 /* ========== View switcher ========== */
 .view {
-    max-width: 1320px;
+    max-width: 1600px;
     margin: 0 auto;
     padding: 40px 24px;
     min-height: calc(100vh - 140px);
@@ -291,8 +291,8 @@ img { max-width: 100%; display: block; }
 
 .cover-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 28px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 24px;
 }
 
 .cover-card {
@@ -1138,7 +1138,7 @@ img { max-width: 100%; display: block; }
 
 /* ========== Footer ========== */
 .site-footer {
-    max-width: 1320px;
+    max-width: 1600px;
     margin: 0 auto;
     padding: 24px;
     border-top: 1px solid var(--border);
