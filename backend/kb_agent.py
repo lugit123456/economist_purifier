@@ -93,6 +93,57 @@ class Config:
 
 # ---------- database.js 回写 ----------
 
+# 块级 HTML 标签,用于把 content_raw 拆成段落
+_BLOCK_TAG_RE = re.compile(
+    r'(<(?:p|h[1-6])(?:\s[^>]*)?>[\s\S]*?</(?:p|h[1-6])>)',
+    re.IGNORECASE,
+)
+
+
+def extract_paragraphs_from_html(content_raw: str, article_id: str) -> list:
+    """从 content_raw HTML 拆出段落数组(双语对照结构)
+
+    返回:
+        [{"para_id": "art_X_p1", "en_html": "<p>...</p>", "zh_text": ""}, ...]
+
+    - en_html 严格保留原文块级标签(p / h1~h6)
+    - zh_text 默认留空,可由后续翻译流水线(translate_zh.js)填充
+    - 已存在的 zh_text 不会被覆盖(由 ensure_paragraphs 在外层判断)
+    """
+    if not content_raw:
+        return []
+    matches = _BLOCK_TAG_RE.findall(content_raw)
+    return [
+        {
+            "para_id": f"{article_id}_p{i + 1}",
+            "en_html": chunk.strip(),
+            "zh_text": "",
+        }
+        for i, chunk in enumerate(matches)
+    ]
+
+
+def ensure_paragraphs(article: dict) -> dict:
+    """确保 article 拥有 paragraphs 字段(中英双栏对照结构)
+
+    规则:
+    - 已有非空 paragraphs: 保留(包括可能的 zh_text 翻译),不重新生成
+    - 没有 paragraphs 但有 content_raw: 从 content_raw 拆分生成
+    - 都没有: 不动
+    """
+    if not isinstance(article, dict):
+        return article
+    existing = article.get("paragraphs")
+    if existing:
+        return article
+    content_raw = article.get("content_raw", "")
+    if content_raw:
+        article["paragraphs"] = extract_paragraphs_from_html(
+            content_raw, article.get("id", "art_unknown")
+        )
+    return article
+
+
 def bake_into_local_database(db_file: Path, new_issue_data: dict) -> None:
     """回流写入技术: 无缝覆写本地 database.js,确保前端无感感知"""
     existing_data: list = []
@@ -107,6 +158,10 @@ def bake_into_local_database(db_file: Path, new_issue_data: dict) -> None:
         except Exception as e:
             print(f"  ⚠️  现有数据库解析异常,将初始化新库: {e}")
             existing_data = []
+
+    # 中英双栏对照结构补全: 每篇文章保证有 paragraphs 字段(已有则保留翻译)
+    for article in new_issue_data.get("articles", []):
+        ensure_paragraphs(article)
 
     # 合并防重
     existing_data = [

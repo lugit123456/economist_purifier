@@ -26,6 +26,19 @@
         currentArticles: [],   // 当前 issue 的全部文章 (供全量搜索)
     };
 
+    // ---------- 中英双栏对照阅读器 状态 ----------
+    const bilingual = {
+        zhBody: null,
+        enBody: null,
+        activeParaId: null,
+        hoverParaId: null,
+        // 程序触发 scrollTo 的时间窗:在此期间 scroll handler 直接 return,
+        // 避免 smooth scroll 触发的 scroll 事件再次进入 syncFrom 形成死循环
+        programmaticScrollUntil: 0,
+        THROTTLE_MS: 16,
+        PROGRAMMATIC_SCROLL_MS: 350,
+    };
+
     // ---------- 工具函数 ----------
 
     function escapeHtml(s) {
@@ -36,6 +49,31 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    function throttle(fn, ms) {
+        let last = 0, timer = null, lastArgs = null, lastThis = null;
+        return function (...args) {
+            const now = Date.now();
+            const remain = ms - (now - last);
+            lastArgs = args;
+            lastThis = this;
+            if (remain <= 0) {
+                last = now;
+                fn.apply(this, args);
+                lastArgs = null;
+            } else if (!timer) {
+                timer = setTimeout(() => {
+                    last = Date.now();
+                    timer = null;
+                    if (lastArgs) {
+                        const a = lastArgs;
+                        lastArgs = null;
+                        fn.apply(lastThis, a);
+                    }
+                }, remain);
+            }
+        };
     }
 
     function formatDate(dateStr) {
@@ -280,13 +318,197 @@
             summaryEl.textContent = article.summary_md || '';
         }
 
-        // content_raw → 已是白名单清洗后的 HTML,直接注入
-        const rawEl = document.getElementById('raw-content');
-        rawEl.innerHTML = article.content_raw || '<p style="color:var(--ink-muted)">(暂无原文)</p>';
+        // 中英双栏对照阅读器
+        renderBilingual(article);
 
         // 重置滚动
         summaryEl.scrollTop = 0;
-        rawEl.scrollTop = 0;
+    }
+
+    // ============================================================
+    //   中英双栏对照阅读器
+    //   - renderBilingual:渲染左右两栏的段落(来自 article.paragraphs)
+    //   - programmaticScrollUntil:程序触发的 scroll 短时间内忽略反向 handler,防死循环
+    //   - hover 委托:一段 hover,双边对应 para_id 同步高亮
+    // ============================================================
+    function renderBilingual(article) {
+        const paras = (article && Array.isArray(article.paragraphs)) ? article.paragraphs : [];
+        bilingual.zhBody = document.getElementById('bilingual-zh-body');
+        bilingual.enBody = document.getElementById('bilingual-en-body');
+
+        // 重置联动状态 + 清掉旧的 class(切换文章时,旧的 active/hover 不能残留)
+        if (bilingual.zhBody) {
+            bilingual.zhBody.querySelectorAll(':scope > .para.is-active, :scope > .para.is-hover')
+                .forEach(p => p.classList.remove('is-active', 'is-hover'));
+        }
+        if (bilingual.enBody) {
+            bilingual.enBody.querySelectorAll(':scope > .para.is-active, :scope > .para.is-hover')
+                .forEach(p => p.classList.remove('is-active', 'is-hover'));
+        }
+        bilingual.activeParaId = null;
+        bilingual.hoverParaId = null;
+        bilingual.programmaticScrollUntil = 0;
+
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+
+        if (paras.length === 0) {
+            const empty = '<p class="bilingual-empty">(该文章暂无双语段落对照)</p>';
+            bilingual.zhBody.innerHTML = empty;
+            bilingual.enBody.innerHTML = empty;
+            return;
+        }
+
+        // zh_text 可能是纯文本或 HTML,直接 innerHTML;para_id 走 escapeHtml 防 XSS
+        bilingual.zhBody.innerHTML = paras.map(p =>
+            `<div class="para" data-para-id="${escapeHtml(p.para_id || '')}">${p.zh_text || ''}</div>`
+        ).join('');
+
+        bilingual.enBody.innerHTML = paras.map(p =>
+            `<div class="para" data-para-id="${escapeHtml(p.para_id || '')}">${p.en_html || ''}</div>`
+        ).join('');
+
+        bilingual.zhBody.scrollTop = 0;
+        bilingual.enBody.scrollTop = 0;
+    }
+
+    // 找当前激活段(顶部阈值之下第一个 .para 的 index)
+    function findActiveParaIndex(body) {
+        const paras = body.querySelectorAll(':scope > .para');
+        if (!paras.length) return -1;
+        const rect = body.getBoundingClientRect();
+        // 阈值:视口顶部往下 ~18% 处或最少 40px,避免小段被快速跳过
+        const threshold = rect.top + Math.max(40, rect.height * 0.18);
+        for (let i = 0; i < paras.length; i++) {
+            const p = paras[i].getBoundingClientRect();
+            if (p.top >= threshold) return i;
+        }
+        return paras.length - 1;
+    }
+
+    function clearActive() {
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+        bilingual.zhBody.querySelectorAll(':scope > .para.is-active')
+            .forEach(p => p.classList.remove('is-active'));
+        bilingual.enBody.querySelectorAll(':scope > .para.is-active')
+            .forEach(p => p.classList.remove('is-active'));
+    }
+
+    function setActiveByIndex(idx) {
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+        clearActive();
+        if (idx < 0) return;
+        const zhParas = bilingual.zhBody.querySelectorAll(':scope > .para');
+        const target = zhParas[idx];
+        if (!target) return;
+        const id = target.dataset.paraId;
+        if (!id) return;
+        bilingual.activeParaId = id;
+        // 通过 para_id 找出两侧对应段(更精准,不受 index 偏移影响)
+        document.querySelectorAll(
+            `#bilingual-zh-body > .para[data-para-id="${CSS.escape(id)}"],` +
+            `#bilingual-en-body > .para[data-para-id="${CSS.escape(id)}"]`
+        ).forEach(p => p.classList.add('is-active'));
+    }
+
+    // 把目标栏滚到 index 对应段顶部,留 ~20px 缓冲
+    // 同时设 programmaticScrollUntil,屏蔽 reverse scroll handler 一段时间
+    function scrollBodyToIndex(body, idx) {
+        const paras = body.querySelectorAll(':scope > .para');
+        const target = paras[idx];
+        if (!target) return;
+        const targetRect = target.getBoundingClientRect();
+        const bodyRect = body.getBoundingClientRect();
+        const delta = targetRect.top - bodyRect.top - 20;
+        // 标记:接下来的 scroll 事件是程序触发的,handler 应忽略
+        bilingual.programmaticScrollUntil = Date.now() + bilingual.PROGRAMMATIC_SCROLL_MS;
+        body.scrollTo({ top: body.scrollTop + delta, behavior: 'smooth' });
+    }
+
+    // 从 source 触发同步(scroll + 高亮)
+    function syncFrom(source) {
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+        // 平板/手机 natural scroll 时只更新 active,不写 scroll(避免循环)
+        if (window.matchMedia('(max-width: 1024px)').matches) {
+            const src = source === 'zh' ? bilingual.zhBody : bilingual.enBody;
+            const idx = findActiveParaIndex(src);
+            setActiveByIndex(idx);
+            return;
+        }
+        const src = source === 'zh' ? bilingual.zhBody : bilingual.enBody;
+        const tgt = source === 'zh' ? bilingual.enBody : bilingual.zhBody;
+        const idx = findActiveParaIndex(src);
+        if (idx < 0) return;
+        setActiveByIndex(idx);
+        scrollBodyToIndex(tgt, idx);
+    }
+
+    function onZhScroll() {
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+        // 程序触发的滚动(syncFrom 写过来的 smooth scroll)在窗口内直接忽略,
+        // 等 smooth scroll 真正完成后再响应用户的主动滚动
+        if (Date.now() < bilingual.programmaticScrollUntil) return;
+        syncFrom('zh');
+    }
+
+    function onEnScroll() {
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+        if (Date.now() < bilingual.programmaticScrollUntil) return;
+        syncFrom('en');
+    }
+
+    // Hover 联动:用 mouseover/mouseleave 委托到各自 col-body
+    // - mouseover:鼠标进入任一段时,先清掉所有旧的 is-hover,再加新的
+    // - mouseleave(非冒泡):鼠标真正离开整个 col-body 时清掉
+    function setupBilingualHover() {
+        [bilingual.zhBody, bilingual.enBody].forEach(body => {
+            if (!body) return;
+            body.addEventListener('mouseover', e => {
+                const para = e.target.closest('.para');
+                if (!para) return;
+                const id = para.dataset.paraId;
+                if (!id) return;
+                if (bilingual.hoverParaId === id) return; // 同一段内子元素穿越
+                clearHover();                              // 关键:切段前先清旧的
+                bilingual.hoverParaId = id;
+                document.querySelectorAll(
+                    `#bilingual-zh-body > .para[data-para-id="${CSS.escape(id)}"],` +
+                    `#bilingual-en-body > .para[data-para-id="${CSS.escape(id)}"]`
+                ).forEach(p => p.classList.add('is-hover'));
+            });
+            body.addEventListener('mouseleave', () => {
+                clearHover();
+            });
+        });
+    }
+
+    function setupBilingualClick() {
+        [bilingual.zhBody, bilingual.enBody].forEach(body => {
+            if (!body) return;
+            body.addEventListener('click', e => {
+                const para = e.target.closest('.para');
+                if (!para) return;
+                const paras = body.querySelectorAll(':scope > .para');
+                const idx = Array.prototype.indexOf.call(paras, para);
+                if (idx < 0) return;
+                clickSync(body, idx);
+            });
+        });
+    }
+
+    function clickSync(clickedBody, idx) {
+        if (!bilingual.zhBody || !bilingual.enBody) return;
+        const other = clickedBody === bilingual.zhBody ? bilingual.enBody : bilingual.zhBody;
+        setActiveByIndex(idx);
+        // 另一栏 smooth scroll 会触发 scroll handler,
+        // 被 scrollBodyToIndex 设的 programmaticScrollUntil 自动抑制 ~350ms
+        scrollBodyToIndex(other, idx);
+    }
+
+    function clearHover() {
+        document.querySelectorAll(
+            '#bilingual-zh-body > .para.is-hover, #bilingual-en-body > .para.is-hover'
+        ).forEach(p => p.classList.remove('is-hover'));
+        bilingual.hoverParaId = null;
     }
 
     // ===== 灯箱逻辑 =====
@@ -707,6 +929,20 @@
         setupMobileNavFab();
         setupWallSearch();
         setupNavSearch();
+
+        // === 中英双栏对照阅读器:仅桌面端启用 scroll 同步 ===
+        if (window.matchMedia('(min-width: 1025px)').matches) {
+            bilingual.zhBody = document.getElementById('bilingual-zh-body');
+            bilingual.enBody = document.getElementById('bilingual-en-body');
+            if (bilingual.zhBody && bilingual.enBody) {
+                bilingual.zhBody.addEventListener('scroll',
+                    throttle(onZhScroll, bilingual.THROTTLE_MS), { passive: true });
+                bilingual.enBody.addEventListener('scroll',
+                    throttle(onEnScroll, bilingual.THROTTLE_MS), { passive: true });
+                setupBilingualHover();
+                setupBilingualClick();
+            }
+        }
 
         // 首次渲染
         if (!document.querySelector('.view.is-active')) {

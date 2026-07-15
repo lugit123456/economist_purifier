@@ -68,6 +68,7 @@
                 <span class="btn-back-icon">←</span>
                 <span>返回封面墙</span>
             </button>
+            <h2 class="issue-toolbar-title" id="current-title-zh"></h2>
             <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="切换文章目录" aria-expanded="false">
                 <span class="mobile-nav-icon">☰</span>
                 <span class="mobile-nav-label">目录</span>
@@ -114,30 +115,41 @@
                 </div>
                 <div class="article-header" id="article-header">
                     <span class="article-section" id="current-section"></span>
-                    <h2 class="article-title-zh" id="current-title-zh"></h2>
                     <h3 class="article-title-en" id="current-title-en"></h3>
                 </div>
-                <div class="article-split">
-                    <div class="split-pane summary-pane">
-                        <div class="pane-header">
-                            <span class="pane-icon">📊</span>
-                            <span class="pane-title">中文解读</span>
-                            <span class="pane-subtitle">LLM 编译</span>
-                        </div>
-                        <article class="pane-body" id="summary-content">
-                            <!-- markdown 渲染 -->
-                        </article>
+
+                <!-- 中文解读:全宽,占 article-pane 顶部 -->
+                <div class="summary-block summary-pane">
+                    <div class="pane-header">
+                        <span class="pane-icon">📊</span>
+                        <span class="pane-title">中文解读</span>
+                        <span class="pane-subtitle">LLM 编译</span>
                     </div>
-                    <div class="split-divider"></div>
-                    <div class="split-pane raw-pane">
-                        <div class="pane-header">
-                            <span class="pane-icon">📜</span>
-                            <span class="pane-title">纯净原文</span>
-                            <span class="pane-subtitle">English Source</span>
+                    <article class="pane-body" id="summary-content">
+                        <!-- markdown 渲染 -->
+                    </article>
+                </div>
+
+                <!-- 中英双栏对照阅读器:scroll-sync + hover-sync -->
+                <div class="bilingual-block">
+                    <div class="bilingual-header">
+                        <span class="bilingual-icon">🔄</span>
+                        <span class="bilingual-title">中英双栏对照</span>
+                        <span class="bilingual-subtitle">Scroll-Sync · Hover-Sync</span>
+                    </div>
+                    <div class="bilingual-grid">
+                        <div class="bilingual-col bilingual-col-zh">
+                            <div class="bilingual-subhead">中文逐段翻译</div>
+                            <div class="bilingual-col-body" id="bilingual-zh-body">
+                                <!-- 段落由 JS 注入 -->
+                            </div>
                         </div>
-                        <article class="pane-body" id="raw-content">
-                            <!-- HTML 原文 -->
-                        </article>
+                        <div class="bilingual-col bilingual-col-en">
+                            <div class="bilingual-subhead">English Source</div>
+                            <div class="bilingual-col-body" id="bilingual-en-body">
+                                <!-- 段落由 JS 注入 -->
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
