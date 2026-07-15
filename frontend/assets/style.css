@@ -775,7 +775,7 @@ img { max-width: 100%; display: block; }
     font-style: italic;
 }
 
-/* ========== 中英双栏对照阅读器 ========== */
+/* ========== 中英逐段对照阅读器(平铺版) ========== */
 .summary-block,
 .bilingual-block {
     background: var(--bg);
@@ -814,107 +814,72 @@ img { max-width: 100%; display: block; }
     margin-left: auto;
 }
 
-.bilingual-grid {
+/* 容器:只装一对一对的段落,不再有 1fr 1fr 大列 */
+.bilingual-grid { }
+
+/* 每一对段:左 ZH、右 EN,平铺到页面 */
+.bilingual-pair {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    border-bottom: 1px dashed var(--border-soft);
 }
+.bilingual-pair:last-child { border-bottom: none; }
 
-.bilingual-col {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-}
-
-.bilingual-col + .bilingual-col {
-    border-left: 1px solid var(--border);
-}
-
-.bilingual-subhead {
-    padding: 10px 16px;
-    font-family: var(--font-ui);
-    font-size: 11px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    border-bottom: 1px solid var(--border-soft);
-    background: var(--bg-soft);
-}
-
-.bilingual-col-body {
-    padding: 18px 20px;
-    overflow-y: auto;
+.bilingual-pair-zh,
+.bilingual-pair-en {
+    padding: 14px 22px;
     font-family: var(--font-body);
     font-size: 14.5px;
     line-height: 1.75;
+    min-width: 0;       /* grid 子项允许压缩,防止中文长行撑爆布局 */
+    overflow-wrap: break-word;
+}
+.bilingual-pair-en {
+    border-left: 1px solid var(--border);
     color: var(--text-soft);
-    flex: 1;
-    min-height: 0;
+}
+.bilingual-pair-zh {
+    color: var(--text);
 }
 
-.bilingual-col-zh .bilingual-col-body { color: var(--text); }
-
-.bilingual-col-body::-webkit-scrollbar { width: 8px; }
-.bilingual-col-body::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 4px; }
-
-/* 段落联动高亮 */
-.bilingual-col-body > .para {
-    padding: 6px 10px;
-    margin: 0 0 6px 0;
-    border-radius: var(--radius-sm);
-    border-left: 3px solid transparent;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
-}
-.bilingual-col-body > .para:last-child { margin-bottom: 0; }
-.bilingual-col-body > .para.is-hover {
-    background: var(--brand-red-light);
-    border-left-color: var(--brand-red);
-}
-.bilingual-col-body > .para.is-active {
-    background: var(--brand-red-dim);
-    border-left-color: var(--brand-red);
-}
-[data-theme="dark"] .bilingual-col-body > .para.is-hover {
-    background: rgba(255, 91, 84, 0.18);
-}
-
-/* 段落内容排版(窄栏版) */
-.bilingual-col-body h1 {
+/* 段落内部排版(和之前一致,scope 改成 pair 即可) */
+.bilingual-pair h1 {
     font-family: var(--font-display);
     font-size: 22px;
     font-weight: 700;
-    margin: 22px 0 10px;
+    margin: 18px 0 8px;
     line-height: 1.25;
 }
-.bilingual-col-body h2 {
+.bilingual-pair h2 {
     font-family: var(--font-display);
     font-size: 19px;
     font-weight: 700;
-    margin: 20px 0 8px;
+    margin: 16px 0 6px;
 }
-.bilingual-col-body h3 {
+.bilingual-pair h3 {
     font-family: var(--font-display);
     font-size: 17px;
     font-weight: 700;
-    margin: 18px 0 8px;
+    margin: 14px 0 6px;
 }
-.bilingual-col-body h4 {
+.bilingual-pair h4 {
     font-family: var(--font-display);
     font-size: 15px;
     font-weight: 700;
-    margin: 16px 0 6px;
+    margin: 12px 0 4px;
     color: var(--brand-red);
 }
-.bilingual-col-body p { margin-bottom: 12px; text-align: justify; }
-.bilingual-col-body p:last-child { margin-bottom: 0; }
-.bilingual-col-body a {
+.bilingual-pair p { margin-bottom: 10px; }
+.bilingual-pair p:last-child { margin-bottom: 0; }
+.bilingual-pair a {
     color: var(--brand-red);
     text-decoration: underline;
     text-decoration-thickness: 1px;
     text-underline-offset: 2px;
 }
-.bilingual-col-body strong, .bilingual-col-body b { font-weight: 700; color: var(--text); }
-.bilingual-col-body em, .bilingual-col-body i { font-style: italic; }
-.bilingual-col-body ul, .bilingual-col-body ol { padding-left: 22px; margin-bottom: 12px; }
+.bilingual-pair strong, .bilingual-pair b { font-weight: 700; color: var(--text); }
+.bilingual-pair em, .bilingual-pair i { font-style: italic; }
+.bilingual-pair ul, .bilingual-pair ol { padding-left: 22px; margin-bottom: 10px; }
 
 .bilingual-empty {
     color: var(--text-muted);
@@ -1179,16 +1144,13 @@ img { max-width: 100%; display: block; }
         order: 1;
     }
 
-    /* 平板/手机:双栏上下堆叠 */
-    .bilingual-grid {
+    /* 平板/手机:每对的左右栏堆叠(防止半屏宽字太窄) */
+    .bilingual-pair {
         grid-template-columns: 1fr;
     }
-    .bilingual-col + .bilingual-col {
+    .bilingual-pair-en {
         border-left: none;
-        border-top: 1px solid var(--border);
-    }
-    .bilingual-col-body {
-        max-height: 60vh;
+        border-top: 1px dashed var(--border-soft);
     }
 
     .pane-body {
@@ -1259,13 +1221,12 @@ img { max-width: 100%; display: block; }
         max-height: 400px;
     }
 
-    .bilingual-col-body {
-        padding: 14px 16px;
+    .bilingual-pair-zh,
+    .bilingual-pair-en {
+        padding: 12px 16px;
         font-size: 13.5px;
-        max-height: 50vh;
     }
-
-    .bilingual-subhead { padding: 8px 14px; }
+    }
 
     .indicators-gallery {
         grid-template-columns: 1fr;
@@ -1311,8 +1272,9 @@ img { max-width: 100%; display: block; }
 @media print {
     .masthead, .floating-back, .section-nav, .lightbox, .mobile-nav-fab { display: none !important; }
     body { background: white; color: black; }
-    .bilingual-grid { grid-template-columns: 1fr; }
-    .bilingual-col-body, .pane-body { max-height: none; overflow: visible; }
+    .bilingual-pair { grid-template-columns: 1fr; }
+    .bilingual-pair-en { border-left: none; border-top: 1px solid #ccc; }
+    .pane-body { max-height: none; overflow: visible; }
 }
 
 /* ============================================================
@@ -1579,22 +1541,5 @@ body.nav-open {
         overflow-y: visible;
     }
 
-    /* 双语对照:固定高度,内部双栏独立可滚 */
-    .bilingual-block {
-        display: flex;
-        flex-direction: column;
-        height: 90vh;
-    }
-    .bilingual-grid {
-        flex: 1;
-        min-height: 0;
-    }
-    .bilingual-col {
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-    }
-    .bilingual-col-body {
-        overflow-y: auto; /* 覆盖上面 desktop 媒体查询里的 visible */
-    }
+    /* 双语对照:平铺到页面,不用固定高度、不用内部滚动 */
 }

@@ -130,26 +130,20 @@
                     </article>
                 </div>
 
-                <!-- 中英双栏对照阅读器:scroll-sync + hover-sync -->
+                <!-- 中英逐段对照:每段一对左右栏,平铺到整页 -->
                 <div class="bilingual-block">
                     <div class="bilingual-header">
-                        <span class="bilingual-icon">🔄</span>
-                        <span class="bilingual-title">中英双栏对照</span>
-                        <span class="bilingual-subtitle">Scroll-Sync · Hover-Sync</span>
+                        <span class="bilingual-icon">🔁</span>
+                        <span class="bilingual-title">中英对照</span>
+                        <span class="bilingual-subtitle">Bilingual · Read-Through</span>
                     </div>
-                    <div class="bilingual-grid">
-                        <div class="bilingual-col bilingual-col-zh">
-                            <div class="bilingual-subhead">中文逐段翻译</div>
-                            <div class="bilingual-col-body" id="bilingual-zh-body">
-                                <!-- 段落由 JS 注入 -->
-                            </div>
-                        </div>
-                        <div class="bilingual-col bilingual-col-en">
-                            <div class="bilingual-subhead">English Source</div>
-                            <div class="bilingual-col-body" id="bilingual-en-body">
-                                <!-- 段落由 JS 注入 -->
-                            </div>
-                        </div>
+                    <div class="bilingual-grid" id="bilingual-grid">
+                        <!-- 每段对由 JS 注入:
+                             <div class="bilingual-pair">
+                                 <div class="bilingual-pair-zh">...</div>
+                                 <div class="bilingual-pair-en">...</div>
+                             </div>
+                        -->
                     </div>
                 </div>
             </section>
