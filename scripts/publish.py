@@ -108,6 +108,9 @@ def main():
                         help='跳过编译步骤 (kb_agent 已单独跑过)')
     parser.add_argument('--no-push', action='store_true',
                         help='跳过 git push (本地调试场景)')
+    parser.add_argument('--force-push-empty', action='store_true',
+                        help='即使没有新 commit 也强制 push '
+                             '(默认行为:无 commit 则跳过 push)')
     args = parser.parse_args()
 
     print('🚀 economist_purifier 一键发布\n')
@@ -115,11 +118,18 @@ def main():
     if not args.no_compile:
         step_compile()
 
+    # step_commit() 已经返回 True/False,串到 step_push() 判断即可
+    has_commit = False
     if not os.environ.get('SKIP_COMMIT'):
-        step_commit()
+        has_commit = step_commit()
 
     if not args.no_push:
-        step_push()
+        if has_commit or args.force_push_empty:
+            step_push()
+        else:
+            # 没有新 commit → 直接跳过 push,不连远程、不打日志噪音
+            print('\n📤 Step 3/3: 推送到 origin ...')
+            print('  ⏭️  (无新 commit,跳过 push · 加 --force-push-empty 强制推送)')
 
     print('\n✅ 全部完成!')
     print('   Netlify 检测到 push 后会自动部署项目根 (无需 build)')
