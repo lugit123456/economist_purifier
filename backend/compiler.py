@@ -18,6 +18,12 @@ from typing import Optional
 from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, Field
 
+try:
+    from bs4 import BeautifulSoup
+    _HAS_BS4 = True
+except ImportError:
+    _HAS_BS4 = False
+
 
 # ---------- Prompt 设计 ----------
 
@@ -82,6 +88,30 @@ NEWS_TRANSLATION_PROMPT = """你是专业英中翻译。请将《经济学人》
 英文原文:
 \"\"\"
 {content}
+\"\"\""""
+
+
+# 逐段翻译 prompt: 把 N 段英文段落逐段翻译为中文
+# 输入: paragraphs 数组 (每项含 para_id + en_html)
+# 输出: translations 数组 (与输入一一对应, 顺序一致, 每项是中文翻译的纯文本)
+PARAGRAPH_TRANSLATION_PROMPT = """你是专业英中翻译。请将以下《经济学人》文章的英文段落数组 **逐段** 翻译为忠实中文。
+
+硬性要求:
+1. 严格忠于原文语义, 不增删不解读, 不写导语不写评论
+2. 保留《经济学人》辛辣克制笔法
+3. 专业术语精准 (stagflation → 滞胀, balance sheet recession → 资产负债表衰退)
+4. 人名/地名/机构名使用约定俗成中文译名
+5. 段落数量与输入完全一致, 顺序一一对应 (不增不减不调换)
+6. 每段翻译是纯中文文本, 不要包裹 <p> 等 HTML 标签
+7. 严禁在 JSON 字符串值内部使用英文双引号 "
+8. 严禁输出除 JSON 以外的任何字符 (无前言无 markdown fence)
+
+按以下 JSON 输出:
+{{"translations": ["<第1段中文译文>", "<第2段中文译文>", ...]}}
+
+待翻译段落:
+\"\"\"
+{paragraphs}
 \"\"\""""
 
 
@@ -484,6 +514,178 @@ class EconomistCompiler:
             )
             article["compile_status"] = "failed"
 
+    # -------- 逐段翻译 (双语对照阅读器用) --------
+
+    # 块大小: 每个 LLM 请求最多翻译这么多段 (避免超长 prompt)
+    _PARA_CHUNK_SIZE = 12
+
+    @staticmethod
+    def _html_to_text(en_html: str) -> str:
+        """把 en_html (块级 HTML) 抽取为纯文本, 节省 LLM token"""
+        if not en_html:
+            return ""
+        if not _HAS_BS4:
+            # 退化: 简单剥标签
+            return re.sub(r"<[^>]+>", "", en_html).strip()
+        soup = BeautifulSoup(en_html, "lxml")
+        return soup.get_text(separator=" ", strip=True)
+
+    async def _call_llm_translate_paragraphs(self, plain_paragraphs: list[str]) -> list[str]:
+        """单次 LLM 调用, 把一组英文段落翻译为中文
+
+        输入: 纯文本段落数组
+        输出: 中文翻译数组 (顺序与输入一致, 长度相同)
+        """
+        # 把段落用编号拼接, 帮助 LLM 保持顺序
+        joined = "\n\n".join(
+            f"[P{i + 1}] {p}" for i, p in enumerate(plain_paragraphs)
+        )
+        user_prompt = PARAGRAPH_TRANSLATION_PROMPT.format(paragraphs=joined)
+        system_prompt = "你是专业英中翻译,信达雅即可,仅输出 JSON。"
+
+        api_kwargs = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.3,
+        }
+        if self.use_json_response_format:
+            api_kwargs["response_format"] = {"type": "json_object"}
+
+        try:
+            response = await self.client.chat.completions.create(**api_kwargs)
+        except (TypeError, ValueError) as e:
+            if "response_format" in str(e) and "response_format" in api_kwargs:
+                api_kwargs.pop("response_format", None)
+                response = await self.client.chat.completions.create(**api_kwargs)
+            else:
+                raise
+
+        raw = response.choices[0].message.content or "{}"
+        data = _parse_llm_json(raw)
+        translations = data.get("translations", [])
+        # 防御: 长度不匹配时, 多余段留空, 缺失段留空
+        if not isinstance(translations, list):
+            return ["" for _ in plain_paragraphs]
+        result = ["" for _ in plain_paragraphs]
+        for i, t in enumerate(translations[:len(plain_paragraphs)]):
+            if isinstance(t, str):
+                result[i] = t.strip()
+        return result
+
+    async def _translate_paragraphs_with_retry(self, plain_paragraphs: list[str],
+                                                art_id: str) -> list[str]:
+        """带重试 + 降级的逐段翻译
+
+        策略:
+        1. 全文一次性 LLM 调用
+        2. 瞬时错误 (timeout/限流) 重试 max_retries 次
+        3. 永久错误 (422/JSON 解析) → 不重试, 走降级
+        4. 降级: 分段(每段单独)再试一次 (避免长 prompt 触发审核)
+        5. 最终兜底: 全部留空
+        """
+        if not plain_paragraphs:
+            return []
+
+        # === 第一阶段: 全文一次性 ===
+        last_error = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                translations = await self._call_llm_translate_paragraphs(plain_paragraphs)
+                # 校验: 至少翻译出一半以上的非空段落才算成功
+                non_empty = sum(1 for t in translations if t)
+                if non_empty >= max(1, len(plain_paragraphs) // 2):
+                    print(f"  ✅ {art_id} 逐段翻译完成 ({attempt}/{self.max_retries}, {non_empty}/{len(plain_paragraphs)} 非空)")
+                    return translations
+                last_error = ValueError(f"逐段翻译返回过少有效译文 ({non_empty}/{len(plain_paragraphs)})")
+                print(f"  ⚠️  {art_id} 逐段翻译有效数不足, 重试 ({attempt}/{self.max_retries})")
+                await asyncio.sleep(2)
+            except (RateLimitError, APITimeoutError) as e:
+                last_error = e
+                wait = min(2 ** attempt, 30)
+                print(f"  ⚠️  {art_id} 逐段翻译瞬时错误: {type(e).__name__}, {wait}s 后重试…")
+                await asyncio.sleep(wait)
+            except APIError as e:
+                status = getattr(e, "status_code", None)
+                err_str = str(e).lower()
+                if status == 422 or "sensitive" in err_str or "unprocessable" in err_str:
+                    last_error = e
+                    print(f"  🛡  {art_id} 逐段翻译内容审核拦截 (422), 进入降级")
+                    break
+                last_error = e
+                wait = min(2 ** attempt, 30)
+                print(f"  ⚠️  {art_id} 逐段翻译 API 错误: {type(e).__name__}, {wait}s 后重试…")
+                await asyncio.sleep(wait)
+            except Exception as e:
+                last_error = e
+                print(f"  ❌ {art_id} 逐段翻译解析失败 (不可重试): {type(e).__name__}: {str(e)[:100]}")
+                break
+
+        # === 第二阶段: 降级 — 逐段单独翻译 ===
+        print(f"  🔄 {art_id} 逐段翻译降级: 单段逐次翻译")
+        result = ["" for _ in plain_paragraphs]
+        for i, p in enumerate(plain_paragraphs):
+            if not p:
+                continue
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    single = await self._call_llm_translate_paragraphs([p])
+                    if single and single[0]:
+                        result[i] = single[0]
+                        break
+                except Exception as e:
+                    if attempt < self.max_retries:
+                        await asyncio.sleep(2)
+                    else:
+                        print(f"  ⚠️  {art_id} 第 {i+1} 段降级翻译失败: {type(e).__name__}: {str(e)[:80]}")
+        non_empty = sum(1 for t in result if t)
+        print(f"  📝 {art_id} 逐段翻译降级完成: {non_empty}/{len(result)} 非空")
+        return result
+
+    async def compile_paragraphs(self, article: dict) -> None:
+        """把 article.paragraphs 的 zh_text 填上中文翻译 (原地修改)
+
+        跳过条件:
+        - 已有非空 zh_text (避免覆盖已翻译内容)
+        - 没有 paragraphs 字段
+        - 编译状态为 failed (没必要翻译失败的文章)
+        """
+        if not isinstance(article, dict):
+            return
+        paragraphs = article.get("paragraphs")
+        if not paragraphs or not isinstance(paragraphs, list):
+            return
+        if article.get("compile_status") == "failed":
+            return
+        # 已全部翻译过 → 跳过
+        if all((isinstance(p, dict) and (p.get("zh_text") or "").strip())
+               for p in paragraphs):
+            return
+
+        art_id = article.get("id", "unknown")
+        # 抽取每段纯文本 (en_html → text)
+        plain = [self._html_to_text(p.get("en_html", "")) for p in paragraphs]
+        # 跳过空段, 后面只翻译非空段
+        non_empty_idx = [i for i, t in enumerate(plain) if t]
+        non_empty_plain = [plain[i] for i in non_empty_idx]
+        if not non_empty_plain:
+            return
+        # 分块: 每块最多 _PARA_CHUNK_SIZE 段
+        translations: list[str] = []
+        for chunk_start in range(0, len(non_empty_plain), self._PARA_CHUNK_SIZE):
+            chunk = non_empty_plain[chunk_start:chunk_start + self._PARA_CHUNK_SIZE]
+            chunk_translations = await self._translate_paragraphs_with_retry(
+                chunk, f"{art_id}[{chunk_start + 1}-{chunk_start + len(chunk)}]"
+            )
+            translations.extend(chunk_translations)
+
+        # 回填: 按原 index 写入 paragraphs[i].zh_text
+        for k, idx in enumerate(non_empty_idx):
+            if k < len(translations) and translations[k]:
+                paragraphs[idx]["zh_text"] = translations[k]
+
     # -------- 整期并发编译 --------
 
     async def compile_issue(self, issue_data: dict) -> dict:
@@ -499,17 +701,19 @@ class EconomistCompiler:
               f"编译 {len(articles)} 篇中文解读…")
 
         start = time.time()
-        tasks = [
-            self.compile_one(art, issue_date)
-            for art in articles
-        ]
+        # 每篇文章: 先做主编译 (title_zh + summary_md), 再做逐段翻译 (paragraphs[].zh_text)
+        async def _one_full(art: dict):
+            await self.compile_one(art, issue_date)
+            if art.get("paragraphs"):
+                await self.compile_paragraphs(art)
+
+        tasks = [_one_full(art) for art in articles]
         await asyncio.gather(*tasks)
 
         elapsed = time.time() - start
         success = sum(1 for a in articles if not a["title_zh"].startswith("【编译失败】"))
         print(f"  🎯 {issue_date} 期编译闭环: 成功 {success}/{len(articles)},"
               f"耗时 {elapsed:.1f}s")
-
         return issue_data
 
     # -------- 单篇研报落盘 --------

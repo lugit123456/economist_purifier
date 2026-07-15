@@ -55,10 +55,18 @@ class Config:
         )
 
         # 路径
-        base = Path(__file__).resolve().parent.parent
+        self.base = Path(__file__).resolve().parent.parent
         self.watch_dir = Path(os.getenv("WATCH_DIR", "./raw/imports")).resolve()
         self.archive_dir = self.watch_dir / "archived"
         self.image_dir = Path(os.getenv("IMAGE_DIR", "./raw/images")).resolve()
+        # ★ 图片目录的项目根相对路径,用于写入 database.js 时保持 IMAGE_DIR 一致
+        #   IMAGE_DIR=./frontend/images  → "frontend/images"
+        #   IMAGE_DIR=./raw/images       → "raw/images" (向后兼容)
+        try:
+            self.image_dir_rel = self.image_dir.relative_to(self.base).as_posix()
+        except ValueError:
+            # IMAGE_DIR 不在项目根下(罕见),退化为绝对路径字符串
+            self.image_dir_rel = str(self.image_dir)
         self.output_dir = Path(os.getenv("OUTPUT_DIR", "./output")).resolve()
         self.db_file = Path(os.getenv("DB_FILE", "./frontend/database.js")).resolve()
 
@@ -86,6 +94,8 @@ class Config:
             f"  - 模型: {self.openai_model}\n"
             f"  - 并发: {self.llm_concurrency}\n"
             f"  - 监听: {self.watch_dir}\n"
+            f"  - 图片目录 (绝对): {self.image_dir}\n"
+            f"  - 图片目录 (相对): {self.image_dir_rel}\n"
             f"  - 输出: {self.output_dir}\n"
             f"  - 数据库: {self.db_file}"
         )
@@ -144,8 +154,12 @@ def ensure_paragraphs(article: dict) -> dict:
     return article
 
 
-def bake_into_local_database(db_file: Path, new_issue_data: dict) -> None:
-    """回流写入技术: 无缝覆写本地 database.js,确保前端无感感知"""
+def bake_into_local_database(db_file: Path, new_issue_data: dict,
+                              ensure_paragraphs_flag: bool = True) -> None:
+    """回流写入技术: 无缝覆写本地 database.js,确保前端无感感知
+
+    ensure_paragraphs_flag=False 时跳过段落补全 (kb_agent 已在 compile 前补全过)
+    """
     existing_data: list = []
 
     if db_file.exists() and db_file.stat().st_size > 0:
@@ -160,8 +174,9 @@ def bake_into_local_database(db_file: Path, new_issue_data: dict) -> None:
             existing_data = []
 
     # 中英双栏对照结构补全: 每篇文章保证有 paragraphs 字段(已有则保留翻译)
-    for article in new_issue_data.get("articles", []):
-        ensure_paragraphs(article)
+    if ensure_paragraphs_flag:
+        for article in new_issue_data.get("articles", []):
+            ensure_paragraphs(article)
 
     # 合并防重
     existing_data = [
@@ -189,7 +204,8 @@ async def process_single_epub(epub_path: Path, cfg: Config,
     try:
         # Step 1: EPUB 极速解包 (dry_run 也需要这一步)
         raw_issue_data = extract_and_parse_epub(
-            epub_path, image_dir=cfg.image_dir
+            epub_path, image_dir=cfg.image_dir,
+            image_dir_rel=cfg.image_dir_rel,
         )
 
         if dry_run:
@@ -201,7 +217,11 @@ async def process_single_epub(epub_path: Path, cfg: Config,
             # 不归档, 留待正式跑
             return True
 
-        # Step 2: LLM 并发编译
+        # Step 1.5: 拆出 paragraphs 块 (供 compiler 逐段翻译, 必须在编译前准备好)
+        for article in raw_issue_data.get("articles", []):
+            ensure_paragraphs(article)
+
+        # Step 2: LLM 并发编译 (含主编译 + 逐段翻译)
         compiled_issue_data = await compiler.compile_issue(raw_issue_data)
 
         # Step 3: .md 研报本地落盘
@@ -209,8 +229,9 @@ async def process_single_epub(epub_path: Path, cfg: Config,
         if saved:
             print(f"  📝 已落盘 {len(saved)} 篇 .md 研报到 {cfg.output_dir}")
 
-        # Step 4: 回流 database.js
-        bake_into_local_database(cfg.db_file, compiled_issue_data)
+        # Step 4: 回流 database.js (compile_issue 已翻译过 zh_text, 此处不重复 ensure)
+        bake_into_local_database(cfg.db_file, compiled_issue_data,
+                                  ensure_paragraphs_flag=False)
 
         # Step 5: 归档原始 EPUB
         archive_path = cfg.archive_dir / epub_path.name
@@ -244,7 +265,8 @@ def check_and_process_jobs(cfg: Config, dry_run: bool = False) -> int:
         print(f"  🧪 [DRY-RUN] 仅统计数量, 不调 LLM, 不归档")
         for epub in epub_files:
             try:
-                issue = extract_and_parse_epub(epub, image_dir=cfg.image_dir)
+                issue = extract_and_parse_epub(epub, image_dir=cfg.image_dir,
+                                               image_dir_rel=cfg.image_dir_rel)
                 from collections import Counter
                 cat_counts = Counter(a.get("category", "?") for a in issue["articles"])
                 print(f"  📊 {epub.name}: {len(issue['articles'])} 篇")

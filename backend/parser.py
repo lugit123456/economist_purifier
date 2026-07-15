@@ -417,7 +417,8 @@ _IMG_SRC_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.IGNORECASE)
 
 def _extract_cartoon_images(z: zipfile.ZipFile, opf_path: str,
                              raw_html: bytes, issue_date: str,
-                             art_id: str, image_dir: Path) -> list[str]:
+                             art_id: str, image_dir: Path,
+                             image_dir_rel: str = "raw/images") -> list[str]:
     """
     从漫画文章的 XHTML 中提取 <img> 引用的图片, 持久化到 images/<issue_date>/ 目录
 
@@ -441,7 +442,7 @@ def _extract_cartoon_images(z: zipfile.ZipFile, opf_path: str,
         out_filename = f"{art_id}_cartoon_{counter}{ext}"
         out_path = issue_img_dir / out_filename
         out_path.write_bytes(z.read(img_path))
-        saved.append(f"raw/images/{issue_date}/{out_filename}")
+        saved.append(f"{image_dir_rel}/{issue_date}/{out_filename}")
         counter += 1
 
     return saved
@@ -479,7 +480,8 @@ def _is_indicators_section(title: str, section: str = "") -> bool:
 
 def _extract_indicator_images(z: zipfile.ZipFile, opf_path: str,
                                 raw_html: bytes, issue_date: str,
-                                art_id: str, image_dir: Path) -> list[dict]:
+                                art_id: str, image_dir: Path,
+                                image_dir_rel: str = "raw/images") -> list[dict]:
     """
     从 indicators 板块的 XHTML 中提取所有图表图片。
 
@@ -520,7 +522,7 @@ def _extract_indicator_images(z: zipfile.ZipFile, opf_path: str,
         out_path = issue_img_dir / out_filename
         out_path.write_bytes(z.read(img_path))
         saved.append({
-            "path": f"raw/images/{issue_date}/{out_filename}",
+            "path": f"{image_dir_rel}/{issue_date}/{out_filename}",
             "caption": caption,
         })
 
@@ -528,7 +530,8 @@ def _extract_indicator_images(z: zipfile.ZipFile, opf_path: str,
 
 
 def _extract_cover(z: zipfile.ZipFile, opf_path: str, opf_soup: BeautifulSoup,
-                   issue_date: str, image_dir: Path) -> str:
+                   issue_date: str, image_dir: Path,
+                   image_dir_rel: str = "raw/images") -> str:
     """精准拦截本期封面,其他冗余插图一律丢弃以节省 98%+ 存储
 
     返回项目根相对路径 (符合 Schema 规范),前端可直接拼接 `../` 使用
@@ -551,18 +554,21 @@ def _extract_cover(z: zipfile.ZipFile, opf_path: str, opf_soup: BeautifulSoup,
     print(f"  📸 成功提取本期高清封面: cover_{issue_date}.jpg")
 
     # 返回项目根相对路径,前端拼接 `../` 即可访问
-    return f"raw/images/cover_{issue_date}.jpg"
+    return f"{image_dir_rel}/cover_{issue_date}.jpg"
 
 
 def extract_and_parse_epub(epub_path: Path, image_dir: Path,
-                           issue_date: str = "") -> dict:
+                           issue_date: str = "",
+                           image_dir_rel: str = "raw/images") -> dict:
     """
     EPUB 高性能解包入口。
 
     Args:
         epub_path: 原始 .epub 文件路径
-        image_dir: 封面图持久化目录
+        image_dir: 封面图持久化目录(绝对路径)
         issue_date: 出版日期 (YYYY-MM-DD),为空时从文件名推断
+        image_dir_rel: 图片目录的 **项目根相对路径** (用于写入数据库的路径前缀,
+                       例如 IMAGE_DIR=./frontend/images 时传 "frontend/images")
 
     Returns:
         标准化 issue_data dict
@@ -590,7 +596,8 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
         opf_soup = BeautifulSoup(opf_content, "xml")
 
         # 2. 精准拦截封面
-        cover_saved_path = _extract_cover(z, opf_path, opf_soup, issue_date, image_dir)
+        cover_saved_path = _extract_cover(z, opf_path, opf_soup, issue_date,
+                                          image_dir, image_dir_rel)
 
         # 3. ★ 核心改动: 以 NCX/toc 为单一真源,不再以 spine 遍历
         toc_articles = _find_toc_articles(z, opf_path, opf_soup)
@@ -639,7 +646,8 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
             if _is_cartoon_article(title_eng, section):
                 section = "Cartoon"
                 cartoon_images = _extract_cartoon_images(
-                    z, opf_path, raw_html, issue_date, art_id, image_dir
+                    z, opf_path, raw_html, issue_date, art_id,
+                    image_dir, image_dir_rel
                 )
                 if cartoon_images:
                     print(f"  🎨 {art_id} 检测到漫画, 提取 {len(cartoon_images)} 张图片")
@@ -649,7 +657,8 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
             if _is_indicators_section(title_eng, section):
                 section = "Indicators"
                 indicator_images = _extract_indicator_images(
-                    z, opf_path, raw_html, issue_date, art_id, image_dir
+                    z, opf_path, raw_html, issue_date, art_id,
+                    image_dir, image_dir_rel
                 )
                 if indicator_images:
                     print(f"  📊 {art_id} indicators 板块, 提取 {len(indicator_images)} 张图表")
