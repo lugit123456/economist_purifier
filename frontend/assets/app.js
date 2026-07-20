@@ -285,6 +285,9 @@
 
         // 重置滚动
         summaryEl.scrollTop = 0;
+
+        // FAB 上一篇/下一篇 状态更新
+        if (typeof updateArticleNavFabState === 'function') updateArticleNavFabState();
     }
 
     // ============================================================
@@ -413,8 +416,9 @@
         }
 
         if (target) {
-            renderArticle(target);
+            // 先设 state, 这样 renderArticle 内部的 updateArticleNavFabState 能读到正确的 articleId
             state.currentArticleId = target.id;
+            renderArticle(target);
             // 更新 URL (若缺 articleId)
             if (!articleId) {
                 navigate(`/issue/${issueId}/${target.id}`, /* replace */ true);
@@ -448,30 +452,57 @@
             switchView('view-wall', () => renderWall());
         }
         document.body.classList.toggle('in-issue', !!issueId);
-        updateFloatingBack();
+        updateArticleNavFabState();
     }
 
-    // ---------- 悬浮返回按钮 ----------
+    // ---------- 文章上一篇 / 下一篇 FAB ----------
 
-    function updateFloatingBack() {
-        const btn = document.getElementById('floating-back');
-        if (!btn) return;
-        const onIssue = !!parseHash().issueId;
-        const scrolled = window.scrollY > 200;
-        btn.classList.toggle('is-visible', onIssue && scrolled);
+    function navigateToArticle(articleId) {
+        const issueId = state.currentIssueId;
+        if (!issueId || !articleId) return;
+        navigate(`/issue/${issueId}/${articleId}`);
     }
 
-    function setupFloatingBack() {
-        const btn = document.getElementById('floating-back');
-        if (!btn) return;
-        btn.addEventListener('click', () => {
-            if (parseHash().issueId) {
-                navigate('/');
-            } else {
+    function updateArticleNavFabState() {
+        const prevBtn = document.getElementById('article-nav-prev');
+        const nextBtn = document.getElementById('article-nav-next');
+        if (!prevBtn || !nextBtn) return;
+        const onIssue = !!state.currentIssueId;
+        const articles = state.currentArticles || [];
+        const idx = articles.findIndex(a => a.id === state.currentArticleId);
+        const hasPrev = idx > 0;
+        const hasNext = idx >= 0 && idx < articles.length - 1;
+        prevBtn.classList.toggle('is-disabled', !hasPrev);
+        nextBtn.classList.toggle('is-disabled', !hasNext);
+        prevBtn.classList.toggle('is-visible', onIssue && hasPrev);
+        nextBtn.classList.toggle('is-visible', onIssue && hasNext);
+    }
+
+    function setupArticleNavFab() {
+        const prevBtn = document.getElementById('article-nav-prev');
+        const nextBtn = document.getElementById('article-nav-next');
+        if (!prevBtn || !nextBtn) return;
+        prevBtn.addEventListener('click', () => {
+            // 切文章前先停掉朗读 (TTS.stop() 会重置按钮图标/文字)
+            if (typeof TTS !== 'undefined' && TTS.getState && TTS.getState() !== 'idle') {
+                TTS.stop();
+            }
+            const articles = state.currentArticles || [];
+            const idx = articles.findIndex(a => a.id === state.currentArticleId);
+            if (idx > 0) navigateToArticle(articles[idx - 1].id);
+        });
+        nextBtn.addEventListener('click', () => {
+            // 切文章前先停掉朗读
+            if (typeof TTS !== 'undefined' && TTS.getState && TTS.getState() !== 'idle') {
+                TTS.stop();
+            }
+            const articles = state.currentArticles || [];
+            const idx = articles.findIndex(a => a.id === state.currentArticleId);
+            if (idx >= 0 && idx < articles.length - 1) {
+                navigateToArticle(articles[idx + 1].id);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         });
-        window.addEventListener('scroll', updateFloatingBack, { passive: true });
     }
 
     // ===== Theme toggle =====
@@ -540,44 +571,6 @@
         // 点击文章后自动收起
         document.addEventListener('click', (e) => {
             if (e.target.closest('.article-item') && nav.classList.contains('is-open')) {
-                setOpen(false);
-            }
-        });
-    }
-
-    // ===== Mobile FAB drawer =====
-    function setupMobileNavFab() {
-        const fab = document.getElementById('mobile-nav-fab');
-        const nav = document.querySelector('.section-nav');
-        if (!fab || !nav) return;
-
-        // 创建 backdrop
-        const backdrop = document.createElement('div');
-        backdrop.className = 'nav-drawer-backdrop';
-        document.body.appendChild(backdrop);
-
-        const setOpen = (open) => {
-            nav.classList.toggle('is-open', open);
-            fab.classList.toggle('is-active', open);
-            backdrop.classList.toggle('is-visible', open);
-            document.body.classList.toggle('nav-open', open);
-            fab.setAttribute('aria-expanded', open ? 'true' : 'false');
-        };
-
-        fab.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const open = !nav.classList.contains('is-open');
-            setOpen(open);
-        });
-
-        // 点击 backdrop 关闭
-        backdrop.addEventListener('click', () => setOpen(false));
-
-        // ★ 选中文章后不再自动折叠 — 让用户连续浏览, 抽屉保持打开
-        //    用户点 FAB 再次 / 点 backdrop / 按 Esc 才关闭
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && nav.classList.contains('is-open')) {
                 setOpen(false);
             }
         });
@@ -710,6 +703,412 @@
         });
     }
 
+    // ---------- TTS 朗读 (浏览器原生 Web Speech API) ----------
+
+    const TTS = (() => {
+        const synth = ('speechSynthesis' in window) ? window.speechSynthesis : null;
+        let voicesCache = [];
+        let voicesReady = false;
+        let currentBtn = null;
+        let currentUtter = null;
+        let voiceRetryHandle = null;
+        // 状态机: idle / playing / paused
+        let state = 'idle';
+
+        // 用户在音色面板里的选择 (持久化到 localStorage)
+        const PREF_KEY = 'economist_purifier_tts_pref';
+        let pref = { voiceZh: '', voiceEn: '', rate: 1.0 };
+        try {
+            const saved = localStorage.getItem(PREF_KEY);
+            if (saved) Object.assign(pref, JSON.parse(saved));
+        } catch (e) {}
+
+        function savePref() {
+            try { localStorage.setItem(PREF_KEY, JSON.stringify(pref)); } catch (e) {}
+        }
+
+        function loadVoices() {
+            if (!synth) return [];
+            voicesCache = synth.getVoices() || [];
+            voicesReady = voicesCache.length > 0;
+            return voicesCache;
+        }
+
+        // iOS/Safari 上 voices 是异步加载的, 必须等 voiceschanged
+        if (synth) {
+            loadVoices();
+            synth.addEventListener && synth.addEventListener('voiceschanged', () => {
+                loadVoices();
+            });
+            // 兜底轮询: 部分实现不发 voiceschanged
+            if (!voicesReady) {
+                voiceRetryHandle = setInterval(() => {
+                    loadVoices();
+                    if (voicesReady && voiceRetryHandle) {
+                        clearInterval(voiceRetryHandle);
+                        voiceRetryHandle = null;
+                    }
+                }, 250);
+                // 5 秒后强制结束轮询 (避免永远跑)
+                setTimeout(() => {
+                    if (voiceRetryHandle) {
+                        clearInterval(voiceRetryHandle);
+                        voiceRetryHandle = null;
+                    }
+                }, 5000);
+            }
+        }
+
+        function pickVoice(langPrefix) {
+            if (!voicesCache.length) loadVoices();
+            const prefix = langPrefix.toLowerCase();
+            // 用户在面板里手动选了 → 优先用它
+            const prefName = prefix.startsWith('zh') ? pref.voiceZh : prefix.startsWith('en') ? pref.voiceEn : '';
+            if (prefName) {
+                const exact = voicesCache.find(v => v.name === prefName);
+                if (exact) return exact;
+            }
+            const candidates = voicesCache.filter(v => v.lang && v.lang.toLowerCase().startsWith(prefix));
+            if (candidates.length === 0) return null;
+            // 单个直接用
+            if (candidates.length === 1) return candidates[0];
+
+            // ★ 关键: 系统默认 eSpeak/compact voice 听起来非常机械
+            //    优先级排序: 在线 > 自然/神经 > Google/Microsoft > 默认排序
+            const VOICE_KEYWORDS = /(natural|neural|premium|enhanced|wavenet|online|journey|studio)/i;
+            const PROVIDER_BONUS = /(google|microsoft|amazon|apple|naturalreaders|cereproc|nuance)/i;
+            const score = (v) => {
+                const name = (v.name || '');
+                let s = 0;
+                if (v.localService === false) s += 100;        // 在线 voice 通常更清楚
+                if (VOICE_KEYWORDS.test(name)) s += 50;
+                if (PROVIDER_BONUS.test(name)) s += 30;
+                if (v.default) s += 10;
+                return s;
+            };
+            candidates.sort((a, b) => score(b) - score(a));
+            return candidates[0];
+        }
+
+        function stop() {
+            if (!synth) return;
+            try { synth.cancel(); } catch (e) {}
+            state = 'idle';
+            if (currentBtn) {
+                currentBtn.classList.remove('is-playing');
+                const icon = currentBtn.querySelector('.tts-icon');
+                const lbl = currentBtn.querySelector('.tts-label');
+                if (icon) icon.textContent = '🔊';
+                if (lbl) lbl.textContent = lbl.dataset.ttsDefault || '朗读';
+                currentBtn = null;
+            }
+            currentUtter = null;
+        }
+
+        function pause() {
+            if (!synth) return false;
+            if (state !== 'playing') return false;
+            try { synth.pause(); } catch (e) { return false; }
+            state = 'paused';
+            if (currentBtn) {
+                const icon = currentBtn.querySelector('.tts-icon');
+                const lbl = currentBtn.querySelector('.tts-label');
+                if (icon) icon.textContent = '▶';
+                if (lbl) lbl.textContent = '继续';
+            }
+            return true;
+        }
+
+        function resume() {
+            if (!synth) return false;
+            if (state !== 'paused') return false;
+            try { synth.resume(); } catch (e) { return false; }
+            state = 'playing';
+            if (currentBtn) {
+                const icon = currentBtn.querySelector('.tts-icon');
+                const lbl = currentBtn.querySelector('.tts-label');
+                if (icon) icon.textContent = '⏸';
+                if (lbl) lbl.textContent = '暂停';
+            }
+            return true;
+        }
+
+        function getState() { return state; }
+
+        function speak(text, opts) {
+            if (!synth) {
+                showTip('此浏览器不支持 Web Speech API');
+                return false;
+            }
+            if (!text || !text.trim()) {
+                showTip('(无内容可朗读)');
+                return false;
+            }
+            const btn = opts && opts.button;
+            const lang = (opts && opts.lang) || 'zh-CN';
+            const voice = pickVoice(lang);
+
+            // 点击的是当前正在播放的按钮 → 停止
+            if (currentBtn && btn && currentBtn === btn) {
+                stop();
+                return true;
+            }
+
+            // 已经在播放别的 → 停掉旧的再开始
+            if (synth.speaking || synth.pending) {
+                try { synth.cancel(); } catch (e) {}
+                // Chrome bug: cancel 后立刻 speak 会被吞, 等 100ms
+                setTimeout(() => doSpeak(text, lang, voice, btn), 100);
+                return true;
+            }
+
+            // 没有在播放 → 直接 speak
+            doSpeak(text, lang, voice, btn);
+            return true;
+        }
+
+        // Chrome 对超长 utterance 有截断 bug, 按句末切块
+        function chunkText(text, maxLen) {
+            const chunks = [];
+            const sentenceRe = /[^。！？.!?\n]+[。！？.!?]?/g;
+            const sentences = text.match(sentenceRe) || [text];
+            let cur = '';
+            for (const s of sentences) {
+                if ((cur + s).length > maxLen && cur) {
+                    chunks.push(cur.trim());
+                    cur = s;
+                } else {
+                    cur += s;
+                }
+            }
+            if (cur.trim()) chunks.push(cur.trim());
+            if (chunks.length === 1 && chunks[0].length > maxLen * 2) {
+                const big = chunks[0];
+                chunks.length = 0;
+                for (let i = 0; i < big.length; i += maxLen) {
+                    chunks.push(big.slice(i, i + maxLen));
+                }
+            }
+            return chunks.length ? chunks : [text];
+        }
+
+        function doSpeak(text, lang, voice, btn) {
+            const chunks = chunkText(text, 180);
+            const rate = pref.rate || (lang.startsWith('zh') ? 0.95 : 1.0);
+            let startedAny = false;
+
+            function playChunk(idx) {
+                if (idx >= chunks.length) {
+                    stop();
+                    return;
+                }
+                const utter = new SpeechSynthesisUtterance(chunks[idx]);
+                utter.lang = lang;
+                utter.rate = rate;
+                utter.pitch = 1.0;
+                if (voice) utter.voice = voice;
+                utter.onstart = () => {
+                    state = 'playing';
+                    if (btn && !startedAny) {
+                        startedAny = true;
+                        currentBtn = btn;
+                        btn.classList.add('is-playing');
+                        const icon = btn.querySelector('.tts-icon');
+                        const lbl = btn.querySelector('.tts-label');
+                        if (icon) icon.textContent = '⏸';
+                        if (lbl) {
+                            if (!lbl.dataset.ttsDefault) lbl.dataset.ttsDefault = lbl.textContent;
+                            lbl.textContent = '暂停';
+                        }
+                    }
+                };
+                utter.onpause = () => { state = 'paused'; };
+                utter.onresume = () => { state = 'playing'; };
+                utter.onend = () => playChunk(idx + 1);
+                utter.onerror = () => stop();
+                currentUtter = utter;
+                try {
+                    synth.speak(utter);
+                } catch (e) {
+                    console.warn('TTS chunk speak failed', e);
+                    stop();
+                    showTip('朗读失败, 请检查浏览器 TTS 设置');
+                }
+            }
+
+            playChunk(0);
+
+            if (!voice) {
+                const langName = lang.startsWith('zh') ? '中文' : '英文';
+                showTip(`未检测到${langName} TTS 语音包, 将使用默认语音。\n请到 系统设置 → 语言 → 添加${langName}语音后刷新。`);
+            }
+        }
+
+        // 列出指定语言的可用 voice, 给上层 voice picker 用
+        function listVoices(langPrefix) {
+            if (!voicesCache.length) loadVoices();
+            const prefix = (langPrefix || '').toLowerCase();
+            return voicesCache
+                .filter(v => v.lang && v.lang.toLowerCase().startsWith(prefix))
+                .map(v => ({ name: v.name, lang: v.lang, voice: v }));
+        }
+
+        function supported() {
+            return !!synth;
+        }
+
+        function tipElement() {
+            let el = document.getElementById('tts-tip');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'tts-tip';
+                el.style.cssText = [
+                    'position:fixed', 'left:50%', 'bottom:80px',
+                    'transform:translateX(-50%)',
+                    'background:rgba(0,0,0,0.82)', 'color:#fff',
+                    'padding:10px 16px', 'border-radius:8px',
+                    'font-family:var(--font-ui)', 'font-size:13px',
+                    'max-width:90vw', 'white-space:pre-line',
+                    'text-align:center', 'z-index:999',
+                    'opacity:0', 'transition:opacity .25s',
+                    'pointer-events:none',
+                ].join(';');
+                document.body.appendChild(el);
+            }
+            return el;
+        }
+        let tipHideTimer = null;
+        function showTip(msg) {
+            const el = tipElement();
+            el.textContent = msg;
+            el.style.opacity = '1';
+            if (tipHideTimer) clearTimeout(tipHideTimer);
+            tipHideTimer = setTimeout(() => {
+                el.style.opacity = '0';
+            }, 3500);
+        }
+
+        return { speak, stop, pause, resume, getState, getCurrentBtn: () => currentBtn,
+            supported, showTip, voicesReady: () => voicesReady,
+            listVoices, savePref, getPref: () => pref };
+    })();
+
+    // 抽取中英对照 zh / en 全部段落文本
+    function collectBilingualText(lang) {
+        const grid = document.getElementById('bilingual-grid');
+        if (!grid) return '';
+        const sel = lang === 'en' ? '.bilingual-pair-en' : '.bilingual-pair-zh';
+        const parts = [];
+        grid.querySelectorAll(sel).forEach(node => {
+            // 跳过图片占位段 (chart 段含 <img>, 用 data-chart-id 标识)
+            const figure = node.querySelector('figure.chart-figure');
+            if (figure) {
+                const alt = figure.querySelector('img')?.getAttribute('alt') || '';
+                const cap = figure.querySelector('figcaption')?.textContent || '';
+                // chart 段 zh_text 由 LLM 在左侧面板, 这里 alt/cap 仅作上下文, 不强制朗读
+                if (lang === 'en') {
+                    const txt = [alt, cap].filter(Boolean).join('. ');
+                    if (txt) parts.push(txt);
+                }
+                return;
+            }
+            const txt = node.textContent.trim();
+            if (txt) parts.push(txt);
+        });
+        return parts.join('\n\n');
+    }
+
+    function collectSummaryText() {
+        const el = document.getElementById('summary-content');
+        if (!el) return '';
+        return el.textContent.trim();
+    }
+
+    function setupTtsButtons() {
+        const bindings = [
+            { id: 'tts-summary', getText: collectSummaryText, lang: 'zh-CN' },
+            { id: 'tts-bilingual-zh', getText: () => collectBilingualText('zh'), lang: 'zh-CN' },
+            { id: 'tts-bilingual-en', getText: () => collectBilingualText('en'), lang: 'en-US' },
+        ];
+        bindings.forEach(b => {
+            const btn = document.getElementById(b.id);
+            if (!btn) return;
+            btn.addEventListener('click', () => {
+                if (!TTS.supported()) {
+                    TTS.showTip('此浏览器不支持 Web Speech API');
+                    return;
+                }
+                const s = TTS.getState();
+                // paused → 继续 (按按钮的当前 text 判断, 因为 paused 时 onstart 不会重跑)
+                if (s === 'paused' && btn === TTS.getCurrentBtn()) {
+                    TTS.resume();
+                    return;
+                }
+                // playing 本按钮 → 暂停
+                if (s === 'playing' && btn === TTS.getCurrentBtn()) {
+                    TTS.pause();
+                    return;
+                }
+                // idle / 别的按钮在播 → 从头开始
+                const text = b.getText();
+                if (!text || !text.trim()) {
+                    TTS.showTip('(暂无可朗读内容)');
+                    return;
+                }
+                TTS.speak(text, { lang: b.lang, button: btn });
+            });
+        });
+    }
+
+    function setupTtsVoicePanel() {
+        const settingsBtn = document.getElementById('tts-voice-settings');
+        const panel = document.getElementById('tts-voice-panel');
+        const closeBtn = document.getElementById('tts-voice-close');
+        const selZh = document.getElementById('tts-voice-zh');
+        const selEn = document.getElementById('tts-voice-en');
+        if (!settingsBtn || !panel) return;
+
+        function populate() {
+            if (!selZh || !selEn) return;
+            const zh = TTS.listVoices('zh');
+            const en = TTS.listVoices('en');
+            selZh.innerHTML = '<option value="">(自动选择最佳)</option>' +
+                zh.map(v => `<option value="${escapeAttr(v.name)}">${escapeHtml(v.name)} (${v.lang})</option>`).join('');
+            selEn.innerHTML = '<option value="">(自动选择最佳)</option>' +
+                en.map(v => `<option value="${escapeAttr(v.name)}">${escapeHtml(v.name)} (${v.lang})</option>`).join('');
+            const cur = TTS.getPref();
+            selZh.value = cur.voiceZh || '';
+            selEn.value = cur.voiceEn || '';
+        }
+
+        settingsBtn.addEventListener('click', () => {
+            populate();
+            panel.hidden = !panel.hidden;
+        });
+        closeBtn && closeBtn.addEventListener('click', () => { panel.hidden = true; });
+
+        selZh && selZh.addEventListener('change', () => {
+            const cur = TTS.getPref();
+            cur.voiceZh = selZh.value;
+            TTS.savePref();
+        });
+        selEn && selEn.addEventListener('change', () => {
+            const cur = TTS.getPref();
+            cur.voiceEn = selEn.value;
+            TTS.savePref();
+        });
+
+        // voices 是异步加载的, 一旦加载完刷新一次下拉
+        if (window.speechSynthesis) {
+            const refresh = () => { if (!panel.hidden) populate(); };
+            window.speechSynthesis.addEventListener && window.speechSynthesis.addEventListener('voiceschanged', refresh);
+            setTimeout(refresh, 1000);
+            setTimeout(refresh, 3000);
+        }
+    }
+
+    function escapeAttr(s) { return String(s || '').replace(/"/g, '&quot;'); }
+
     // ---------- Init ----------
 
     function init() {
@@ -723,11 +1122,12 @@
         const btnBack = document.getElementById('btn-back');
         if (btnBack) btnBack.addEventListener('click', () => navigate('/'));
 
-        setupFloatingBack();
         setupThemeToggle();
         setupLightbox();
         setupMobileNavToggle();
-        setupMobileNavFab();
+        setupTtsButtons();
+        setupTtsVoicePanel();
+        setupArticleNavFab();  // 取代 setupMobileNavFab + setupFloatingBack
         setupWallSearch();
         setupNavSearch();
 

@@ -814,6 +814,206 @@ img { max-width: 100%; display: block; }
     margin-left: auto;
 }
 
+/* ============================================================
+   TTS 朗读按钮 (Web Speech API,  零成本)
+   ============================================================ */
+.tts-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 6px 12px;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.tts-btn:hover {
+    background: var(--bg-soft);
+    border-color: var(--brand-red);
+    color: var(--brand-red);
+}
+
+.tts-btn:active {
+    transform: scale(0.97);
+}
+
+.tts-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* 正在朗读:实心红色 */
+.tts-btn.is-playing {
+    background: var(--brand-red);
+    border-color: var(--brand-red);
+    color: #fff;
+}
+
+.tts-btn.is-playing:hover {
+    background: var(--brand-red-dark);
+    border-color: var(--brand-red-dark);
+    color: #fff;
+}
+
+.tts-btn .tts-icon {
+    font-size: 13px;
+    line-height: 1;
+}
+
+/* 中英对照头部: 2 个按钮排在一起 */
+.tts-group {
+    display: inline-flex;
+    gap: 8px;
+    margin-left: auto;
+}
+
+/* 自适应: 极窄屏只留图标 */
+@media (max-width: 480px) {
+    .tts-btn .tts-label {
+        display: none;
+    }
+    .tts-btn {
+        padding: 6px 10px;
+    }
+}
+
+/* ============================================================
+   音色设置按钮 + 面板
+   ============================================================ */
+.tts-voice-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.tts-voice-btn:hover {
+    background: var(--bg-soft);
+    border-color: var(--brand-red);
+    color: var(--brand-red);
+}
+
+.tts-voice-panel {
+    position: relative;
+    margin: 0 24px 18px;
+    padding: 0;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.tts-voice-panel[hidden] {
+    display: none;
+}
+
+.tts-voice-panel-inner {
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tts-voice-panel-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.tts-voice-label {
+    flex: 0 0 80px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+}
+
+.tts-voice-select {
+    flex: 1;
+    padding: 7px 10px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.tts-voice-select:focus {
+    outline: none;
+    border-color: var(--brand-red);
+}
+
+.tts-voice-panel-hint {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border);
+    margin-top: 4px;
+}
+
+.tts-voice-close {
+    align-self: flex-end;
+    padding: 6px 18px;
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity var(--transition-fast);
+}
+
+.tts-voice-close:hover {
+    opacity: 0.85;
+}
+
+@media (max-width: 480px) {
+    .tts-voice-btn-label {
+        display: none;
+    }
+    .tts-voice-panel {
+        margin: 0 14px 14px;
+    }
+    .tts-voice-panel-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+    .tts-voice-label {
+        flex: 1;
+    }
+}
+
 /* 容器:只装一对一对的段落,不再有 1fr 1fr 大列 */
 .bilingual-grid { }
 
@@ -1065,40 +1265,58 @@ img { max-width: 100%; display: block; }
 .lightbox-next { right: 16px; }
 
 /* ========== 悬浮返回按钮 ========== */
-.floating-back {
+.article-nav-fab.article-nav-next {
     position: fixed;
     right: 32px;
     bottom: 32px;
     width: 52px;
     height: 52px;
-    border-radius: 50%;
+    border-radius: 26px;
     background: var(--brand-red);
     color: #fff;
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 14px;
+    font-weight: 600;
     box-shadow: var(--shadow-floating);
     opacity: 0;
     transform: translateY(20px) scale(0.9);
     pointer-events: none;
     transition: all var(--transition-fast);
     z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 16px;
+    gap: 6px;
+    min-width: 100px;
 }
 
-.floating-back.is-visible {
+.article-nav-fab.article-nav-next.is-visible {
     opacity: 1;
     transform: translateY(0) scale(1);
     pointer-events: auto;
 }
 
-.floating-back:hover {
+.article-nav-fab.article-nav-next:hover {
     background: var(--brand-red-dark);
     transform: translateY(-3px) scale(1.05);
 }
 
-.floating-back span {
-    display: block;
-    line-height: 52px;
-    text-align: center;
+.article-nav-fab.is-disabled {
+    opacity: 0.35 !important;
+    pointer-events: none !important;
+    filter: grayscale(0.4);
+}
+
+.article-nav-fab .article-nav-icon {
+    display: inline-block;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.article-nav-fab .article-nav-label {
+    display: inline-block;
+    font-size: 13px;
+    line-height: 1;
 }
 
 /* ========== Footer ========== */
@@ -1157,7 +1375,7 @@ img { max-width: 100%; display: block; }
         max-height: none;
     }
 
-    .floating-back { right: 20px; bottom: 20px; }
+    .article-nav-fab.article-nav-next { right: 20px; bottom: 20px; }
 }
 
 /* ============================================================
@@ -1242,12 +1460,12 @@ img { max-width: 100%; display: block; }
         font-size: 24px;
     }
 
-    .floating-back {
-        width: 46px;
-        height: 46px;
-        font-size: 18px;
+    .article-nav-fab.article-nav-next {
+        font-size: 13px;
+        min-width: 92px;
         right: 16px;
         bottom: 16px;
+        padding: 0 12px;
     }
 
     .site-footer {
@@ -1270,7 +1488,7 @@ img { max-width: 100%; display: block; }
    Print styles (bonus)
    ============================================================ */
 @media print {
-    .masthead, .floating-back, .section-nav, .lightbox, .mobile-nav-fab { display: none !important; }
+    .masthead, .section-nav, .lightbox, .article-nav-fab { display: none !important; }
     body { background: white; color: black; }
     .bilingual-pair { grid-template-columns: 1fr; }
     .bilingual-pair-en { border-left: none; border-top: 1px solid #ccc; }
@@ -1413,9 +1631,10 @@ img { max-width: 100%; display: block; }
 }
 
 /* ============================================================
-   Mobile FAB — 浮动目录按钮 (始终可见, 跟用户滚到哪)
+   上一篇 FAB (左下, 黑色胶囊)
+   - 默认 display:none,  仅当 .is-visible 才显示,  PC/移动端通用
    ============================================================ */
-.mobile-nav-fab {
+.article-nav-fab.article-nav-prev {
     display: none;
     position: fixed;
     left: 16px;
@@ -1425,6 +1644,7 @@ img { max-width: 100%; display: block; }
     padding: 0 18px 0 14px;
     background: var(--text);
     color: var(--bg);
+    border: none;
     border-radius: 24px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
     align-items: center;
@@ -1435,33 +1655,52 @@ img { max-width: 100%; display: block; }
     letter-spacing: 0.05em;
     transition: all var(--transition-fast);
     -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
 }
 
-.mobile-nav-fab:hover,
-.mobile-nav-fab:active {
+/* .is-visible 控制显示: 适用于所有 viewport */
+.article-nav-fab.article-nav-prev.is-visible {
+    display: inline-flex;
+}
+
+.article-nav-fab.article-nav-prev:hover,
+.article-nav-fab.article-nav-prev:active {
     background: var(--brand-red);
     transform: translateY(-2px);
 }
 
-.mobile-nav-fab.is-active {
-    background: var(--brand-red);
-}
-
-.fab-icon {
-    font-size: 18px;
+.article-nav-fab .article-nav-icon {
+    font-size: 14px;
     line-height: 1;
-    transition: transform var(--transition-fast);
 }
 
-.mobile-nav-fab.is-active .fab-icon {
-    transform: rotate(90deg);
+.article-nav-fab .article-nav-label {
+    line-height: 1;
 }
 
-@media (max-width: 1024px) {
-    /* 只在 issue view (view-issue.is-active) 时显示 */
-    .view-issue.is-active ~ .mobile-nav-fab,
-    body.in-issue .mobile-nav-fab {
-        display: inline-flex;
+/* 移动端进一步收紧尺寸 */
+@media (max-width: 640px) {
+    .article-nav-fab.article-nav-prev {
+        height: 44px;
+        font-size: 12px;
+        padding: 0 14px 0 12px;
+        left: 12px;
+        bottom: 12px;
+    }
+}
+
+/* 极小屏幕 */
+@media (max-width: 360px) {
+    .article-nav-fab.article-nav-prev .article-nav-label {
+        display: none;  /* 太窄只留箭头 */
+    }
+    .article-nav-fab.article-nav-prev {
+        width: 44px;
+        padding: 0;
+        justify-content: center;
+    }
+    .article-nav-fab.article-nav-next {
+        min-width: 84px;
     }
 }
 

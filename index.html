@@ -68,6 +68,9 @@
                 <span class="btn-back-icon">←</span>
                 <span>返回封面墙</span>
             </button>
+            <button class="tts-voice-btn" id="tts-voice-settings" aria-label="朗读音色设置" title="朗读音色设置">
+                <span>🔧</span><span class="tts-voice-btn-label">音色</span>
+            </button>
             <h2 class="issue-toolbar-title" id="current-title-zh"></h2>
             <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="切换文章目录" aria-expanded="false">
                 <span class="mobile-nav-icon">☰</span>
@@ -76,6 +79,25 @@
             <div class="issue-toolbar-meta">
                 <span class="issue-id" id="issue-id-label"></span>
                 <span class="issue-date" id="issue-date-label"></span>
+            </div>
+        </div>
+
+        <!-- 音色选择面板 (默认展开, 一次看见所有选项) -->
+        <div class="tts-voice-panel" id="tts-voice-panel">
+            <div class="tts-voice-panel-inner">
+                <div class="tts-voice-panel-row">
+                    <label class="tts-voice-label">中文 voice</label>
+                    <select class="tts-voice-select" id="tts-voice-zh" data-lang="zh"></select>
+                </div>
+                <div class="tts-voice-panel-row">
+                    <label class="tts-voice-label">英文 voice</label>
+                    <select class="tts-voice-select" id="tts-voice-en" data-lang="en"></select>
+                </div>
+                <div class="tts-voice-panel-hint">
+                    选择感觉最清楚的音色。系统装的 voice 越多, 选项越多;
+                    若列表为空, 请到 系统设置 → 辅助功能 → 语音 → 添加中文/英文语音包 后刷新页面。
+                </div>
+                <button class="tts-voice-close" id="tts-voice-close" type="button">关闭</button>
             </div>
         </div>
 
@@ -123,7 +145,10 @@
                     <div class="pane-header">
                         <span class="pane-icon">📊</span>
                         <span class="pane-title">中文解读</span>
-                        <span class="pane-subtitle">LLM 编译</span>
+                        <button class="tts-btn" id="tts-summary" type="button" aria-label="朗读中文解读" title="朗读中文解读">
+                            <span class="tts-icon" aria-hidden="true">🔊</span>
+                            <span class="tts-label">朗读</span>
+                        </button>
                     </div>
                     <article class="pane-body" id="summary-content">
                         <!-- markdown 渲染 -->
@@ -135,7 +160,16 @@
                     <div class="bilingual-header">
                         <span class="bilingual-icon">🔁</span>
                         <span class="bilingual-title">中英对照</span>
-                        <span class="bilingual-subtitle">Bilingual · Read-Through</span>
+                        <div class="tts-group">
+                            <button class="tts-btn" id="tts-bilingual-zh" type="button" aria-label="朗读对照中文" title="朗读对照中文">
+                                <span class="tts-icon" aria-hidden="true">🔊</span>
+                                <span class="tts-label">朗读中文</span>
+                            </button>
+                            <button class="tts-btn" id="tts-bilingual-en" type="button" aria-label="朗读对照英文" title="朗读对照英文">
+                                <span class="tts-icon" aria-hidden="true">🔊</span>
+                                <span class="tts-label">朗读英文</span>
+                            </button>
+                        </div>
                     </div>
                     <div class="bilingual-grid" id="bilingual-grid">
                         <!-- 每段对由 JS 注入:
@@ -149,15 +183,14 @@
             </section>
         </div>
 
-        <!-- 悬浮返回按钮 -->
-        <button class="floating-back" id="floating-back" aria-label="返回顶部" title="返回封面墙">
-            <span>↑</span>
+        <!-- 文章上一篇 / 下一篇 FAB (移动端) -->
+        <button class="article-nav-fab article-nav-prev" id="article-nav-prev" aria-label="上一篇" title="上一篇">
+            <span class="article-nav-icon">◀</span>
+            <span class="article-nav-label">上一篇</span>
         </button>
-
-        <!-- 移动端目录按钮 (fixed, 始终可见) -->
-        <button class="mobile-nav-fab" id="mobile-nav-fab" aria-label="打开文章目录" aria-expanded="false">
-            <span class="fab-icon">☰</span>
-            <span class="fab-label">目录</span>
+        <button class="article-nav-fab article-nav-next" id="article-nav-next" aria-label="下一篇" title="下一篇">
+            <span class="article-nav-label">下一篇</span>
+            <span class="article-nav-icon">▶</span>
         </button>
     </main>
 
