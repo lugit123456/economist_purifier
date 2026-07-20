@@ -124,6 +124,9 @@ python3 -m http.server 8000
 | `OPENAI_MODEL` | 模型名 | `gpt-4o-mini` |
 | `OPENAI_USE_JSON_FORMAT` | 端点不支持 `response_format=json_object` 时设为 `false` | `true` |
 | `LLM_CONCURRENCY` | 单期文章并发上限 | `8` |
+| `LLM_VISION_ENABLED` | 图表/漫画段落视觉解析开关 (`auto` 多模态优先自动降级 / `true` 强制 / `false` 关闭) | `auto` |
+| `LLM_VISION_MODEL` | 多模态专用模型,空则复用 `OPENAI_MODEL` | (空 → `OPENAI_MODEL`) |
+| `LLM_IMAGE_MAX_EDGE` | 图片 base64 前最长边 (像素),超过自动等比缩放 | `1024` |
 | `WATCH_DIR` | 监听 .epub 投放目录 (**Drop box,文件不会被移动**) | `./raw/imports` |
 | `OUTPUT_DIR` | .md 研报落盘根目录 | `./output` |
 | `DB_FILE` | 前端 database.js 路径 | `./frontend/database.js` |
@@ -201,15 +204,36 @@ type Article = {
   summary_md: string;              // Markdown 研报 / 板块快讯 / 忠实译文
   content_raw: string;             // 清洗后的英文原文 HTML
 
+  // 双语对照 (中英左右双栏阅读器用), 由 compile_paragraphs 回填 zh_text
+  // 每个 chart 段含 <figure class="chart-figure"><img>...</figure>
+  paragraphs?: Array<{
+    para_id: string;                         // "art_xxx_p2"
+    en_html: string;                         // 英文块 HTML (chart 段含 <figure>)
+    zh_text: string;                         // 中文翻译 / 图表描述 (由 LLM 填)
+    is_chart?: boolean;                      // true = 内嵌图表/漫画
+    chart_id?: string;                       // "[[CHART_1]]" 占位符 (与 chart_images[i].placeholder_id 对应)
+    image_type?: "chart" | "cartoon";        // LLM 判定的图片类型
+  }>;
+
   // 可选字段
   cartoon_images?: string[];       // 仅 Cartoon 板块,图片项目根相对路径
   indicator_images?: Array<{       // 仅 Indicators 板块
     path: string;
     caption: string;
   }>;
+  chart_images?: Array<{          // 非 Cartoon/Indicators 文章的内嵌图片 (用于 paragraphs)
+    placeholder_id: string;        // "[[CHART_1]]"
+    path: string;
+    caption: string;
+    alt: string;
+  }>;
   compile_status?: string;         // ok / news_fallback / failed
 };
 ```
+
+> **chart paragraph 结构** (内嵌图段,在双栏阅读器里显示为:左栏 `<figure><img>`、右栏 LLM 中文描述):
+> - 普通图(`image_type="chart"`): 80-200 字解析,描述主题+核心数据+结论
+> - 内嵌漫画(`image_type="cartoon"`): 30-80 字,前缀 `🎨 漫画:`,简述讽刺对象+手法
 
 ---
 

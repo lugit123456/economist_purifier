@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -55,6 +56,19 @@ class Config:
         self.use_json_format: bool = os.getenv("OPENAI_USE_JSON_FORMAT", "true").lower() in (
             "true", "1", "yes"
         )
+
+        # 图表图片视觉解析开关
+        # auto  (推荐): 多模态优先,API 拒绝 image_url 时自动降级纯文本
+        # true        : 强制多模态,失败即报错
+        # false       : 关闭视觉,只用 caption + alt + 上下文
+        self.vision_enabled: str = os.getenv("LLM_VISION_ENABLED", "auto").strip().lower()
+        # 多模态调用专用模型,空则复用 OPENAI_MODEL
+        self.vision_model: str = os.getenv("LLM_VISION_MODEL", "").strip()
+        # 图片在 base64 前的最长边 (像素),控制 token
+        try:
+            self.image_max_edge: int = int(os.getenv("LLM_IMAGE_MAX_EDGE", "1024"))
+        except ValueError:
+            self.image_max_edge = 1024
 
         # 路径
         self.base = Path(__file__).resolve().parent.parent
@@ -113,34 +127,95 @@ class Config:
 
 # ---------- database.js 回写 ----------
 
-# 块级 HTML 标签,用于把 content_raw 拆成段落
+# 块级 HTML 标签 + 图表占位符,用于把 content_raw 拆成段落
+# [[CHART_N]] 由 parser._extract_content_with_images 注入, 保留图片原顺序
 _BLOCK_TAG_RE = re.compile(
-    r'(<(?:p|h[1-6])(?:\s[^>]*)?>[\s\S]*?</(?:p|h[1-6])>)',
+    r'(<(?:p|h[1-6])(?:\s[^>]*)?>[\s\S]*?</(?:p|h[1-6])>)|(\[\[CHART_\d+\]\])',
     re.IGNORECASE,
 )
 
 
-def extract_paragraphs_from_html(content_raw: str, article_id: str) -> list:
+def extract_paragraphs_from_html(content_raw: str, article_id: str,
+                                   chart_images: Optional[list] = None) -> list:
     """从 content_raw HTML 拆出段落数组(双语对照结构)
 
     返回:
-        [{"para_id": "art_X_p1", "en_html": "<p>...</p>", "zh_text": ""}, ...]
+        普通段:  {"para_id": "art_X_p3", "en_html": "<p>...</p>", "zh_text": "", "is_chart": False}
+        图表段:  {"para_id": "art_X_p5", "en_html": "<figure class=\"chart-figure\">...</figure>",
+                  "zh_text": "", "is_chart": True, "chart_id": "[[CHART_1]]"}
 
-    - en_html 严格保留原文块级标签(p / h1~h6)
-    - zh_text 默认留空,可由后续翻译流水线(translate_zh.js)填充
-    - 已存在的 zh_text 不会被覆盖(由 ensure_paragraphs 在外层判断)
+    切段规则:
+    - 普通段: <p>/<h1-6> 块 (与旧版一致)
+    - 图表段: content_raw 中的 [[CHART_N]] 占位符(由 parser._extract_content_with_images 注入),
+              按原文顺序混合切分, 保证图片出现在原位置
+    - chart_images: [{placeholder_id, path, caption, alt}, ...], 提供占位符对应的图片元数据
     """
     if not content_raw:
         return []
+
+    # 构建 placeholder_id -> 图片信息 映射
+    placeholder_map: dict = {}
+    if chart_images:
+        for ci in chart_images:
+            pid = ci.get("placeholder_id") if isinstance(ci, dict) else None
+            if pid:
+                placeholder_map[pid] = ci
+
     matches = _BLOCK_TAG_RE.findall(content_raw)
-    return [
-        {
-            "para_id": f"{article_id}_p{i + 1}",
-            "en_html": chunk.strip(),
-            "zh_text": "",
-        }
-        for i, chunk in enumerate(matches)
-    ]
+    paragraphs = []
+    idx = 0
+    for block_match, chart_match in matches:
+        if chart_match:
+            # 图表占位符段
+            placeholder_id = chart_match
+            info = placeholder_map.get(placeholder_id, {}) or {}
+            img_path = (info.get("path") or "").strip()
+            caption = (info.get("caption") or "").strip()
+            alt = (info.get("alt") or "").strip()
+            # HTML 转义 (避免 caption / alt 中含特殊字符破坏 DOM)
+            safe_alt = html_escape(alt, quote=True)
+            safe_caption = html_escape(caption, quote=True)
+
+            figure_parts = [
+                f'<figure class="chart-figure" data-chart-id="{placeholder_id}">',
+                f'<img src="{html_escape(img_path, quote=True)}" alt="{safe_alt}" loading="lazy" decoding="async">',
+            ]
+            if safe_caption:
+                figure_parts.append(f'<figcaption>{safe_caption}</figcaption>')
+            figure_parts.append('</figure>')
+            en_html = "".join(figure_parts)
+
+            paragraphs.append({
+                "para_id": f"{article_id}_p{idx + 1}",
+                "en_html": en_html,
+                "zh_text": "",
+                "is_chart": True,
+                "chart_id": placeholder_id,
+            })
+        elif block_match:
+            # 普通段
+            paragraphs.append({
+                "para_id": f"{article_id}_p{idx + 1}",
+                "en_html": block_match.strip(),
+                "zh_text": "",
+                "is_chart": False,
+            })
+        idx += 1
+    return paragraphs
+
+
+def html_escape(s: str, quote: bool = True) -> str:
+    """HTML 字符转义, 用于 caption / alt / path 等可能含特殊字符的字段"""
+    if not s:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;" if quote else '"')
+        .replace("'", "&#39;" if quote else "'")
+    )
 
 
 def ensure_paragraphs(article: dict) -> dict:
@@ -149,6 +224,7 @@ def ensure_paragraphs(article: dict) -> dict:
     规则:
     - 已有非空 paragraphs: 保留(包括可能的 zh_text 翻译),不重新生成
     - 没有 paragraphs 但有 content_raw: 从 content_raw 拆分生成
+      同时传入 chart_images, 让 [[CHART_N]] 占位符也切成独立段落
     - 都没有: 不动
     """
     if not isinstance(article, dict):
@@ -157,9 +233,11 @@ def ensure_paragraphs(article: dict) -> dict:
     if existing:
         return article
     content_raw = article.get("content_raw", "")
+    chart_images = article.get("chart_images") or []
     if content_raw:
         article["paragraphs"] = extract_paragraphs_from_html(
-            content_raw, article.get("id", "art_unknown")
+            content_raw, article.get("id", "art_unknown"),
+            chart_images=chart_images,
         )
     return article
 
@@ -314,6 +392,9 @@ def check_and_process_jobs(cfg: Config, dry_run: bool = False,
             concurrency=cfg.llm_concurrency,
             output_dir=cfg.output_dir,
             use_json_response_format=cfg.use_json_format,
+            vision_enabled=cfg.vision_enabled,
+            vision_model=cfg.vision_model or cfg.openai_model,
+            image_max_edge=cfg.image_max_edge,
         )
         try:
             success = 0

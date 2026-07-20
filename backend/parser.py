@@ -529,6 +529,116 @@ def _extract_indicator_images(z: zipfile.ZipFile, opf_path: str,
     return saved
 
 
+def _extract_content_with_images(
+    z: zipfile.ZipFile, opf_path: str, raw_html: bytes,
+    issue_date: str, art_id: str, image_dir: Path,
+    image_dir_rel: str = "raw/images",
+) -> tuple[str, list[dict]]:
+    """
+    把原始 HTML 拆成 (content_raw, chart_images),支持后续把图片作为段落插入双语对照流。
+
+    - 顺序遍历 DOM, 同时识别 <figure> 包裹的图 和 独立 <img>
+    - 每个图片保存到 image_dir/{issue_date}/, 文件名 {art_id}_chart_{N}.{ext}
+    - 在 HTML 中用 sentinel 占位符 [[CHART_N]] 替换图片节点, 保留原顺序
+    - 最终 content_raw 是清洗后的 block HTML(含 p/h/ul/li 等白名单), 图片位置以占位符形式保留
+    - chart_images 列表保留每张图的 {placeholder_id, path, caption, alt}
+
+    与 _extract_cartoon_images / _extract_indicator_images 互不影响:
+    - Cartoon 板块: 仍走 _extract_cartoon_images (banner 顶部大图), 本函数不调用
+    - Indicators 板块: 仍走 _extract_indicator_images (画廊灯箱), 本函数不调用
+    - 其他板块文章: 走本函数 (图片进 paragraphs 双栏)
+    """
+    soup = BeautifulSoup(raw_html, "lxml")
+    for badge in soup(["script", "style", "link", "iframe", "noscript"]):
+        badge.decompose()
+
+    opf_parent = str(Path(opf_path).parent)
+    issue_img_dir = image_dir / issue_date
+    issue_img_dir.mkdir(parents=True, exist_ok=True)
+
+    chart_images: list[dict] = []
+    img_counter = 0
+
+    # 1) 先处理 <figure> 包裹的图 (含 img + 可选 figcaption)
+    for fig_elem in list(soup.find_all("figure")):
+        img_tag = fig_elem.find("img")
+        if not img_tag or not img_tag.get("src"):
+            continue  # 没 img 的 figure, 留给后面的 block 处理
+        src_attr = img_tag.get("src", "")
+        img_path = (
+            os.path.normpath(os.path.join(opf_parent, src_attr))
+            .replace("\\", "/").split("#")[0]
+        )
+        if img_path not in z.namelist():
+            continue
+        img_counter += 1
+        ext = Path(img_path).suffix.lower() or ".jpg"
+        out_filename = f"{art_id}_chart_{img_counter}{ext}"
+        out_path = issue_img_dir / out_filename
+        out_path.write_bytes(z.read(img_path))
+
+        fc = fig_elem.find("figcaption")
+        caption = fc.get_text(strip=True)[:200] if fc else ""
+        alt = img_tag.get("alt", "").strip()
+        if not caption:
+            caption = alt[:200]
+
+        placeholder_id = f"[[CHART_{img_counter}]]"
+        chart_images.append({
+            "placeholder_id": placeholder_id,
+            "path": f"{image_dir_rel}/{issue_date}/{out_filename}",
+            "caption": caption,
+            "alt": alt,
+        })
+        # 把整个 figure 替换成占位符文本节点
+        fig_elem.replace_with(soup.new_string(placeholder_id))
+
+    # 2) 再处理独立的 <img> (不在 figure 里)
+    for img_tag in list(soup.find_all("img")):
+        src_attr = img_tag.get("src", "")
+        if not src_attr:
+            img_tag.decompose()
+            continue
+        img_path = (
+            os.path.normpath(os.path.join(opf_parent, src_attr))
+            .replace("\\", "/").split("#")[0]
+        )
+        if img_path not in z.namelist():
+            img_tag.decompose()  # 无效图片, 直接移除避免污染 content_raw
+            continue
+        img_counter += 1
+        ext = Path(img_path).suffix.lower() or ".jpg"
+        out_filename = f"{art_id}_chart_{img_counter}{ext}"
+        out_path = issue_img_dir / out_filename
+        out_path.write_bytes(z.read(img_path))
+
+        alt = img_tag.get("alt", "").strip()
+        caption = alt[:200]  # 独立 img 没 figcaption, 用 alt 兜底
+
+        placeholder_id = f"[[CHART_{img_counter}]]"
+        chart_images.append({
+            "placeholder_id": placeholder_id,
+            "path": f"{image_dir_rel}/{issue_date}/{out_filename}",
+            "caption": caption,
+            "alt": alt,
+        })
+        img_tag.replace_with(soup.new_string(placeholder_id))
+
+    # 3) 用与 clean_html_content 一致的白名单生成清洗 HTML
+    #    占位符 [[CHART_N]] 是普通文本, 会被 get_text() 捕获进所属的 <p>
+    valid_tags = {"h1", "h2", "h3", "h4", "p", "b", "strong", "i", "em", "ul", "ol", "li"}
+    cleaned_paragraphs: list[str] = []
+    for element in soup.find_all(True):
+        if element.name in valid_tags:
+            element.attrs = {}
+            text = element.get_text(strip=True)
+            if text:
+                cleaned_paragraphs.append(str(element))
+
+    content_raw = "\n".join(cleaned_paragraphs)
+    return content_raw, chart_images
+
+
 def _extract_cover(z: zipfile.ZipFile, opf_path: str, opf_soup: BeautifulSoup,
                    issue_date: str, image_dir: Path,
                    image_dir_rel: str = "raw/images") -> str:
@@ -618,11 +728,26 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
                 continue
 
             raw_html = z.read(file_path)
-            cleaned_text = clean_html_content(raw_html)
-
             # 提取标题
             soup_title = BeautifulSoup(raw_html, "lxml").find(["h1", "h2"])
             title_eng = soup_title.get_text(strip=True) if soup_title else "Untitled Article"
+
+            # 检测是否为漫画专栏
+            art_id = f"art_{issue_date}_{str(art_counter).zfill(3)}"
+            is_cartoon = _is_cartoon_article(title_eng, section)
+            is_indicators = _is_indicators_section(title_eng, section)
+
+            # 通用图片提取: 对非 Cartoon / 非 Indicators 文章调用,
+            # 把图片作为占位段嵌入 content_raw, 供 kb_agent 切成 paragraphs
+            # Cartoon/Indicators 仍走各自的 banner / 画廊流程, 不重复提取
+            if not is_cartoon and not is_indicators:
+                cleaned_text, chart_images = _extract_content_with_images(
+                    z, opf_path, raw_html, issue_date, art_id,
+                    image_dir, image_dir_rel,
+                )
+            else:
+                cleaned_text = clean_html_content(raw_html)
+                chart_images = []
 
             # 板块索引页判定 (仅跳索引, 真实文章一律保留):
             #   条件: 标题 == 板块名 (Leaders/Politics/Briefing 这种纯索引) OR
@@ -640,10 +765,9 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
                 toc_skipped.append((title_eng[:40], section, len(cleaned_text)))
                 continue
 
-            # 检测是否为漫画专栏
-            art_id = f"art_{issue_date}_{str(art_counter).zfill(3)}"
+            # 漫画/indicators 提取 (is_cartoon/is_indicators 已在前面判断)
             cartoon_images = []
-            if _is_cartoon_article(title_eng, section):
+            if is_cartoon:
                 section = "Cartoon"
                 cartoon_images = _extract_cartoon_images(
                     z, opf_path, raw_html, issue_date, art_id,
@@ -654,7 +778,7 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
 
             # 检测 Economic & financial indicators 板块 (图表密集页)
             indicator_images = []
-            if _is_indicators_section(title_eng, section):
+            if is_indicators:
                 section = "Indicators"
                 indicator_images = _extract_indicator_images(
                     z, opf_path, raw_html, issue_date, art_id,
@@ -687,6 +811,9 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
                 article["cartoon_images"] = cartoon_images
             if indicator_images:
                 article["indicator_images"] = indicator_images
+            if chart_images:
+                article["chart_images"] = chart_images
+                print(f"  🖼  {art_id} 提取 {len(chart_images)} 张内嵌图片 (将进 paragraphs)")
             articles.append(article)
             art_counter += 1
 
@@ -714,6 +841,10 @@ def extract_and_parse_epub(epub_path: Path, image_dir: Path,
     cartoon_count = sum(1 for a in articles if a.get("cartoon_images"))
     if cartoon_count:
         print(f"  🎨 漫画专栏: {cartoon_count} 篇 (已提取图片)")
+    chart_count = sum(1 for a in articles if a.get("chart_images"))
+    if chart_count:
+        total_charts = sum(len(a.get("chart_images", [])) for a in articles)
+        print(f"  🖼  内嵌图片进 paragraphs: {chart_count} 篇 / {total_charts} 张")
 
     return {
         "issue_date": issue_date,

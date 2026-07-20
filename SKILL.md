@@ -72,6 +72,24 @@ python3 scripts/publish.py --no-push      # 只 commit, 不 push (本地调试)
 | `cartoon` | Cartoon 板块 | 抽取漫画图,前端 banner 展示 |
 | `indicators` | Economic & financial indicators | 抽取所有图表 + caption,前端画廊 + 灯箱 |
 
+## 🖼 内嵌图表/漫画 (in-article 图片)
+
+非 Cartoon / 非 Indicators 板块的文章,会在 `paragraphs` 数组里出现 `is_chart: true` 的段落,内含 `<figure><img>...</figure>`。每个 chart 段会单独调一次 LLM:
+
+- **vision 模式** (默认): 多模态调用,LLM 看图 + 上下文判断类型
+- **类型判定**:
+  - `chart` → 80-200 字中文描述(主题+数据+结论)
+  - `cartoon` → 30-80 字,前缀 `🎨 漫画:`(讽刺对象+手法+笑点)
+- **降级链**: vision 拒 → 纯文本(caption+alt+上下文) → 默认占位
+
+环境变量:
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `LLM_VISION_ENABLED` | `auto` | `auto` (推荐) / `true` / `false` |
+| `LLM_VISION_MODEL` | 复用 `OPENAI_MODEL` | 多模态专用模型,空则用 chat 模型 |
+| `LLM_IMAGE_MAX_EDGE` | `1024` | base64 前的最长边像素 |
+
 ## 三级降级保护
 
 LLM 调用失败时自动降级,绝不丢数据:
@@ -92,6 +110,10 @@ LLM_CONCURRENCY=8               # 并发上限
 WATCH_DIR=./raw/imports         # 投放目录
 OUTPUT_DIR=./output             # .md 落盘根目录
 POLL_INTERVAL=10                # 轮询周期 (秒)
+# 图表/漫画视觉解析 (内嵌 paragraphs)
+LLM_VISION_ENABLED=auto         # auto / true / false
+# LLM_VISION_MODEL=gpt-4o-mini  # 留空则复用 OPENAI_MODEL
+LLM_IMAGE_MAX_EDGE=1024         # 图片 base64 前最长边
 ```
 
 ## CLI 速查
