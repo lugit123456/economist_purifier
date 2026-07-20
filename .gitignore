@@ -27,9 +27,14 @@ frontend/state.db
 frontend/state.db-shm
 frontend/state.db-wal
 
-# 前端静态图片 - 全部跟踪 (需随 Netlify 部署,否则 deploy 时 404)
-# 包括根目录封面图 (cover_*.jpg) 和子目录动态图 (cartoon/indicator)
-# 一期约 1-3 MB, 50 期/年约 100 MB,完全在 git 可承受范围内
+# 数据库与图片 (部署走 Netlify CLI 直推, 不进 git, 避免多机 git 冲突)
+# 这些文件现在由 `netlify deploy --dir=.` 直接推到 Netlify, 不再走 git
+# (旧数据如需清理: git rm -r --cached frontend/database.js frontend/images/)
+frontend/database.js
+frontend/images/
+
+# Netlify CLI 部署排除清单 (与 .gitignore 类似, 但只作用于 `netlify deploy`)
+.netlifyignore
 
 # 系统
 .DS_Store

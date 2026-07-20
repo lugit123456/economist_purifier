@@ -133,7 +133,9 @@ python3 -m http.server 8000
 | `IMAGE_DIR` | 封面/漫画/图表图持久化目录 (默认写到 `frontend/images/` 随 Netlify 部署) | `./frontend/images` |
 | `STATE_DB_FILE` | SQLite 处理记录库路径 (sha256 去重) | `./frontend/state.db` |
 | `POLL_INTERVAL` | 守护进程轮询周期 (秒) | `10` |
-| `AUTO_PUBLISH` | `1` = `--once` 编译完自动调 `publish.py` 推送 | 不启用 |
+| `AUTO_PUBLISH` | `1` = `--once` 编译完自动调 `publish.py` 部署 | 不启用 |
+| `NETLIFY_AUTH_TOKEN` | Netlify Personal Access Token (启用 CLI 直推模式) | — |
+| `NETLIFY_SITE_ID` | Netlify 站点 API ID (启用 CLI 直推模式) | — |
 
 ---
 
@@ -312,7 +314,7 @@ Netlify **直接 publish 项目根**, 不跑任何 build, 路径完全不动:
 │   └── images/            →  封面 + 漫画 + 指标图
 ├── scripts/
 │   ├── kb_agent.py
-│   └── publish.py         →  git push 一键脚本
+│   └── publish.py         →  Netlify CLI 直推 / git push 自动检测
 └── backend/
     ├── parser.py
     └── compiler.py
@@ -325,14 +327,40 @@ Netlify **直接 publish 项目根**, 不跑任何 build, 路径完全不动:
 /.env, /backend/*, /raw/*, /output/*, /scripts/*, /__pycache__/* ...
 ```
 
+> ⚠️ **新部署模式**: `frontend/database.js` 和 `frontend/images/` 现已加入 `.gitignore`。
+> 多机器协作时,各台机器直接 `netlify deploy --prod` 推到 Netlify,**完全绕过 git**,避免并发 push 冲突。
+
+### 部署模式选择
+
+| 模式 | 触发条件 | 多机器协作 | 历史追溯 |
+|------|---------|-----------|---------|
+| **Netlify CLI 直推** ⭐ 推荐 | `.env` 配 `NETLIFY_AUTH_TOKEN` + `NETLIFY_SITE_ID` | ✅ 无冲突,后推的覆盖 | ❌ 无 git 历史 |
+| **GitHub → webhook** (兼容保留) | `.env` 配 `GIT_REMOTE_URL` | ⚠️ 多机器并发 push 有 race | ✅ 完整 git 历史 |
+
+**首次配置 Netlify CLI 直推** (一次性):
+
+```bash
+# 1. 安装 CLI
+npm install -g netlify-cli
+
+# 2. 取凭据
+# Netlify 后台 → User settings → Applications → New access token
+# Netlify 后台 → 你的站点 → Site settings → Site information → API ID
+
+# 3. 填入 .env
+NETLIFY_AUTH_TOKEN=nfp_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NETLIFY_SITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+之后每台机器只需 `python3 scripts/publish.py` 一行。
+
 ### 三种自动化等级
 
 #### Lv.0 — 完全手动
 
 ```bash
 python3 -m backend.kb_agent --once    # 1. 编译
-git add . && git commit -m "..."      # 2. 提交
-git push origin main                   # 3. push → Netlify 自动部署
+python3 scripts/publish.py           # 2. 自动检测: Netlify 直推 或 git push
 ```
 
 #### Lv.1 — 一键发布脚本 ⭐ 推荐
@@ -341,12 +369,12 @@ git push origin main                   # 3. push → Netlify 自动部署
 python3 scripts/publish.py
 ```
 
-自动跑: **编译 → git add → commit → push**。
+自动跑: **编译 → Netlify 直推** (或 git commit + push, 取决于 `.env` 配的部署模式)。
 
 参数:
 - `--no-compile` 跳过编译
-- `--no-push` 只 commit 不 push
-- `SKIP_COMMIT=1` env 跳过 commit
+- `--no-push` 只编译不部署 (本地调试)
+- `--force-push-empty` 无变更也强推
 
 #### Lv.2 — 全自动(投放即上线)
 
@@ -361,34 +389,32 @@ python3 -m backend.kb_agent
 
 ### 首次部署到 Netlify
 
-1. 代码推到 GitHub
+**用 Netlify CLI 直推模式** (推荐):
+1. 在 Netlify 后台手工创建一个空 site,记录 API ID
+2. 配 `.env` 的 `NETLIFY_AUTH_TOKEN` + `NETLIFY_SITE_ID`
+3. 运行 `python3 scripts/publish.py` 即可
+
+**用 GitHub → webhook 模式** (兼容保留):
+1. 把代码推到 GitHub
 2. Netlify 后台 → Add new site → Import from Git → 选仓库
 3. **无需填 build command / publish dir**(从 `netlify.toml` 自动读)
 4. Netlify 自动部署项目根
-5. 配合 `AUTO_PUBLISH=1` 实现"投放即上线"
 
 ### 配置说明
 
 - `netlify.toml` — `publish = "."`, 无 build command, 仅定义缓存 + 安全 headers
 - `_redirects` — 阻挡敏感路径
-- `.gitignore` — `.env` / `raw/` / `output/` 等不入 git
+- `.gitignore` — `.env` / `raw/` / `output/` / `state.db` / `frontend/database.js` / `frontend/images/` 不入 git
+- `.netlifyignore` — Netlify CLI 直推时排除后端代码 / 虚拟环境 / 文档等
+- (新)首次切换到 CLI 直推时,运行 `git rm -r --cached frontend/database.js frontend/images/` 把历史 index 里的旧记录清掉
 
-### 部署方式 C: Netlify CLI
-
-```bash
-npm install -g netlify-cli
-netlify login
-netlify deploy --dir=site --prod
-```
-
-### 本地预览构建产物
+### 本地预览
 
 ```bash
-cd site && python3 -m http.server 8000
-# 访问 http://localhost:8000
+cd frontend && python3 -m http.server 8000   # 本地调试, index.html 在根
 ```
 
-> 所有路径在 `site/` 里都是相对根的(`images/...`, `assets/...`),可直接部署到任何静态 CDN。
+> ⚠️ 从根目录起服务会暴露 `.env` 等敏感文件,生产部署请用 Netlify CLI 直推。
 
 ### 上一节: 本地开发
 
@@ -410,7 +436,7 @@ cd frontend && python3 -m http.server 8000   # 本地调试, index.html 在根
 | `--once` | 处理完所有 .epub 后退出(自动去重) | CI / 一次性补抓 |
 | `--once --force` | 忽略 state.db 去重,强制重新处理 | schema 升级后批量重跑 |
 | (无参数) | 常驻轮询,每 `POLL_INTERVAL` 秒扫一次 | 服务器/开发监听 |
-| (无参数) + `AUTO_PUBLISH=1` | **投放即上线**: 每期编完自动 `git push` → Netlify 部署 | 生产 |
+| (无参数) + `AUTO_PUBLISH=1` | **投放即上线**: 每期编完自动 `publish.py` 部署 | 生产 |
 
 ### 运维子命令 (不需要 API key)
 
@@ -438,9 +464,10 @@ $ python -m backend.kb_agent --status
 
 ### 一键发布 (手动模式)
 ```bash
-python3 scripts/publish.py                # compile + build + commit + push 一条龙
+python3 scripts/publish.py                # 自动检测: Netlify 直推 或 git push
 python3 scripts/publish.py --no-compile   # 跳过编译 (kb_agent 已跑过)
-python3 scripts/publish.py --no-push      # 只 build + commit (本地调试)
+python3 scripts/publish.py --no-push      # 只编译不部署 (本地调试)
+python3 scripts/publish.py --force-push-empty  # 无变更也强推
 ```
 
 ---

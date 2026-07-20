@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-一键发布流程: 编译 → commit → push → Netlify 自动部署
+一键发布流程: 编译 → (commit? git push / Netlify CLI 直推) → 部署上线
 
-架构 (已重构):
-  - Netlify publish = 项目根, 不跑 build
-  - index.html / frontend/* 等路径直接可用, 不需要路径改写
-  - _redirects 文件挡住 .env / backend / raw / output 等敏感目录
-  - site/ 和 build_site.py 已废弃
+双部署模式:
+  - Netlify CLI 直推 (推荐, 多机协作):  避开 git, 避免多机器并发 push 冲突
+  - GitHub → Netlify webhook (兼容保留): 走 git, 历史可追溯
+
+Netlify CLI 模式 (.env 配 NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID 即启用):
+  $ npm install -g netlify-cli       # 一次性
+  $ netlify login                    # 一次性 (或用 NETLIFY_AUTH_TOKEN)
+  $ python3 scripts/publish.py       # 自动检测 → 直推 Netlify
+
+GitHub 模式 (兼容旧流程):
+  $ python3 scripts/publish.py       # 无 Netlify 环境变量 → 走 git push
 
 用法:
   python3 scripts/publish.py              # 完整流程
   python3 scripts/publish.py --no-compile # 跳过编译 (kb_agent 已跑过)
-  python3 scripts/publish.py --no-push    # 只 commit (本机推送另做)
+  python3 scripts/publish.py --no-push    # 只 commit / 不部署
 
 环境变量:
-  SKIP_COMMIT=1    # 跳过 git commit (例如临时)
-  FORCE_PUSH=1     # 强制 push (有冲突时)
-  GIT_REMOTE_URL   # 首次 push 时自动配置 origin
+  SKIP_COMMIT=1        # 跳过 git commit (Netlify 模式下不生效)
+  FORCE_PUSH=1         # 强制 git push (有冲突时, 仅 GitHub 模式)
+  GIT_REMOTE_URL       # 首次 push 时自动配置 origin (仅 GitHub 模式)
+  NETLIFY_AUTH_TOKEN   # Netlify Personal Access Token (推荐)
+  NETLIFY_SITE_ID      # Netlify 站点 ID
 """
 
 import argparse
@@ -84,7 +92,54 @@ def step_commit():
 
 
 def step_push():
-    print('\n📤 Step 3/3: 推送到 origin (触发 Netlify 自动部署) ...')
+    """
+    部署分发: 自动检测走 Netlify CLI 直推 还是 git push
+    优先检测 NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID 环境变量
+    """
+    if _netlify_env_ready():
+        _deploy_to_netlify()
+    else:
+        _push_to_git()
+
+
+def _netlify_env_ready() -> bool:
+    """检查 Netlify CLI 直推所需的环境变量是否就绪"""
+    return bool(os.getenv('NETLIFY_AUTH_TOKEN', '').strip()
+                and os.getenv('NETLIFY_SITE_ID', '').strip())
+
+
+def _deploy_to_netlify():
+    """用 Netlify CLI 直推整个项目根到生产环境"""
+    print('\n📤 Step 3/3: 部署到 Netlify (直推模式, 跳过 GitHub) ...')
+
+    # 检查 netlify CLI 是否可用
+    nl_check = run(['which', 'netlify'], check=False, capture=True).stdout.strip()
+    if not nl_check:
+        print('  ❌ netlify CLI 未安装')
+        print('     安装: npm install -g netlify-cli')
+        print('     登录: netlify login  (或在 .env 配 NETLIFY_AUTH_TOKEN)')
+        sys.exit(1)
+
+    auth_token = os.getenv('NETLIFY_AUTH_TOKEN', '').strip()
+    site_id = os.getenv('NETLIFY_SITE_ID', '').strip()
+
+    # netlify deploy --prod --dir=. --auth-token=... --site=...
+    run([
+        'netlify', 'deploy',
+        '--prod',
+        '--dir=.',
+        f'--auth-token={auth_token}',
+        f'--site={site_id}',
+    ])
+
+    print('\n✅ Netlify 部署完成!')
+    print('   注: 本次直推覆盖了 Netlify 上现有版本, 但旧版会继续服务直到原子切换完成')
+    print('   30-60 秒后访问 ↓')
+
+
+def _push_to_git():
+    """走 GitHub → Netlify webhook 老路 (兼容保留)"""
+    print('\n📤 Step 3/3: 推送到 origin (GitHub → Netlify webhook) ...')
 
     # 检查 remote, 没配则从 .env 读 GIT_REMOTE_URL 自动添加
     remotes_output = run(['git', 'remote', '-v'], check=False, capture=True).stdout
@@ -93,6 +148,7 @@ def step_push():
         if not git_url:
             print('  ⚠️  未配置 git remote "origin",跳过 push')
             print('     设置方法 (.env): GIT_REMOTE_URL=https://github.com/<you>/<repo>.git')
+            print('     或者配 NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID 切换到直推模式')
             return
         print(f'  📡 自动配置 git remote: {git_url}')
         run(['git', 'remote', 'add', 'origin', git_url])
@@ -107,10 +163,10 @@ def main():
     parser.add_argument('--no-compile', action='store_true',
                         help='跳过编译步骤 (kb_agent 已单独跑过)')
     parser.add_argument('--no-push', action='store_true',
-                        help='跳过 git push (本地调试场景)')
+                        help='跳过部署步骤 (本地调试场景)')
     parser.add_argument('--force-push-empty', action='store_true',
-                        help='即使没有新 commit 也强制 push '
-                             '(默认行为:无 commit 则跳过 push)')
+                        help='即使没有新变更也强制部署 '
+                             '(默认行为:无变更则跳过)')
     args = parser.parse_args()
 
     print('🚀 economist_purifier 一键发布\n')
@@ -118,22 +174,26 @@ def main():
     if not args.no_compile:
         step_compile()
 
-    # step_commit() 已经返回 True/False,串到 step_push() 判断即可
-    has_commit = False
-    if not os.environ.get('SKIP_COMMIT'):
-        has_commit = step_commit()
-
+    # Netlify 直推模式: 不需要 git commit, 直接部署; GitHub 模式: 走 commit + push
     if not args.no_push:
-        if has_commit or args.force_push_empty:
-            step_push()
+        if _netlify_env_ready():
+            _deploy_to_netlify()
         else:
-            # 没有新 commit → 直接跳过 push,不连远程、不打日志噪音
-            print('\n📤 Step 3/3: 推送到 origin ...')
-            print('  ⏭️  (无新 commit,跳过 push · 加 --force-push-empty 强制推送)')
+            has_commit = False
+            if not os.environ.get('SKIP_COMMIT'):
+                has_commit = step_commit()
+            if has_commit or args.force_push_empty:
+                _push_to_git()
+            else:
+                print('\n📤 Step 3/3: 推送到 origin ...')
+                print('  ⏭️  (无新 commit,跳过 push · 加 --force-push-empty 强制推送)')
 
     print('\n✅ 全部完成!')
-    print('   Netlify 检测到 push 后会自动部署项目根 (无需 build)')
-    print('   大约 30-60 秒后生效 ↓')
+    if _netlify_env_ready():
+        print('   模式: Netlify CLI 直推 (绕过 GitHub, 多机器无冲突)')
+    else:
+        print('   模式: GitHub → Netlify webhook (经典流程)')
+    print('   30-60 秒后访问 ↓')
 
 
 if __name__ == '__main__':

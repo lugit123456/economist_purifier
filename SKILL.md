@@ -123,15 +123,38 @@ LLM_IMAGE_MAX_EDGE=1024         # 图片 base64 前最长边
 | `--dry-run` | 解析 + 统计,不调 LLM,不归档 |
 | `--once` | 处理完所有 .epub 后退出 |
 | (无参数) | 常驻轮询,每 `POLL_INTERVAL` 秒一次 |
-| (无参数) + `AUTO_PUBLISH=1` | **投放即上线**: 每期编完自动 `git push` → Netlify 部署 |
+| (无参数) + `AUTO_PUBLISH=1` | **投放即上线**: 每期编完自动 publish.py 部署 |
 
 ### 一键发布 (手动模式)
 
 ```bash
-python3 scripts/publish.py    # compile + build + commit + push 一条龙
-python3 scripts/publish.py --no-compile   # 跳过编译 (kb_agent 已跑过)
-python3 scripts/publish.py --no-push      # 只 build + commit (本地调试)
+# 默认自动检测: .env 有 NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID → Netlify 直推
+#                否则 → 走 git commit + git push → Netlify webhook
+python3 scripts/publish.py                      # 完整流程
+python3 scripts/publish.py --no-compile         # 跳过编译 (kb_agent 已跑过)
+python3 scripts/publish.py --no-push            # 只编译不部署 (本地调试)
+python3 scripts/publish.py --force-push-empty   # 无变更也强推
 ```
+
+### 部署模式对比
+
+| 模式 | 配置 | 触发 | 多机协作 |
+|------|------|------|----------|
+| **Netlify CLI 直推** (推荐) | `NETLIFY_AUTH_TOKEN` + `NETLIFY_SITE_ID` | 本地 `publish.py` 直接 `netlify deploy --prod` | ✅ 无 git 冲突,后推的覆盖 |
+| **GitHub → webhook** (兼容) | `GIT_REMOTE_URL` | `git push` → Netlify 监听到 push 部署 | ⚠️ 多机并发 push 有 race condition |
+
+Netlify CLI 直推步骤 (一次性):
+1. `npm install -g netlify-cli`
+2. `netlify login` (打开浏览器授权)
+3. Netlify 后台 → User settings → Applications → 创建 Personal access token
+4. Netlify 后台 → Site settings → Site information → 复制 API ID
+5. 填入 `.env`:
+   ```
+   NETLIFY_AUTH_TOKEN=nfp_xxx
+   NETLIFY_SITE_ID=xxxxxxxx-xxxx-xxxx
+   ```
+
+之后每台机器只需 `python3 scripts/publish.py` 一行,数据库/图片绕过 git 直接到 Netlify。
 
 ## 前端特性
 
