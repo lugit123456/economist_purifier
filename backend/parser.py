@@ -590,8 +590,11 @@ def _extract_content_with_images(
             "caption": caption,
             "alt": alt,
         })
-        # 把整个 figure 替换成占位符文本节点
-        fig_elem.replace_with(soup.new_string(placeholder_id))
+        # 用 <p> 占位符替换 figure,确保白名单清洗后仍存活
+        # (否则 figure 作为 body/div 直接子节点时, 纯文本占位符会被 find_all(True) 跳过导致丢失)
+        placeholder_holder = soup.new_tag("p")
+        placeholder_holder.string = placeholder_id
+        fig_elem.replace_with(placeholder_holder)
 
     # 2) 再处理独立的 <img> (不在 figure 里)
     for img_tag in list(soup.find_all("img")):
@@ -622,7 +625,9 @@ def _extract_content_with_images(
             "caption": caption,
             "alt": alt,
         })
-        img_tag.replace_with(soup.new_string(placeholder_id))
+        placeholder_holder = soup.new_tag("p")
+        placeholder_holder.string = placeholder_id
+        img_tag.replace_with(placeholder_holder)
 
     # 3) 用与 clean_html_content 一致的白名单生成清洗 HTML
     #    占位符 [[CHART_N]] 是普通文本, 会被 get_text() 捕获进所属的 <p>

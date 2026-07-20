@@ -166,34 +166,19 @@ def extract_paragraphs_from_html(content_raw: str, article_id: str,
     idx = 0
     for block_match, chart_match in matches:
         if chart_match:
-            # 图表占位符段
-            placeholder_id = chart_match
-            info = placeholder_map.get(placeholder_id, {}) or {}
-            img_path = (info.get("path") or "").strip()
-            caption = (info.get("caption") or "").strip()
-            alt = (info.get("alt") or "").strip()
-            # HTML 转义 (避免 caption / alt 中含特殊字符破坏 DOM)
-            safe_alt = html_escape(alt, quote=True)
-            safe_caption = html_escape(caption, quote=True)
-
-            figure_parts = [
-                f'<figure class="chart-figure" data-chart-id="{placeholder_id}">',
-                f'<img src="{html_escape(img_path, quote=True)}" alt="{safe_alt}" loading="lazy" decoding="async">',
-            ]
-            if safe_caption:
-                figure_parts.append(f'<figcaption>{safe_caption}</figcaption>')
-            figure_parts.append('</figure>')
-            en_html = "".join(figure_parts)
-
-            paragraphs.append({
-                "para_id": f"{article_id}_p{idx + 1}",
-                "en_html": en_html,
-                "zh_text": "",
-                "is_chart": True,
-                "chart_id": placeholder_id,
-            })
+            # 图表占位符段 (独立出现的 [[CHART_N]],不在任何 <p> 内)
+            paragraphs.append(_build_chart_paragraph(
+                article_id, idx, chart_match, placeholder_map, html_escape,
+            ))
+        elif block_match and _CHART_PLACEHOLDER_RE.search(block_match):
+            # <p>...[[CHART_N]]...</p> 中嵌入了 placeholder, 切分为多段
+            for split_para in _split_block_by_chart(
+                article_id, idx, block_match, placeholder_map, html_escape,
+            ):
+                paragraphs.append(split_para)
+                idx += 1
+            continue  # idx 已在 split_block_by_chart 内递增
         elif block_match:
-            # 普通段
             paragraphs.append({
                 "para_id": f"{article_id}_p{idx + 1}",
                 "en_html": block_match.strip(),
@@ -202,6 +187,106 @@ def extract_paragraphs_from_html(content_raw: str, article_id: str,
             })
         idx += 1
     return paragraphs
+
+
+# 匹配 [[CHART_N]] 占位符, 用于在 <p>...</p> 内拆分
+_CHART_PLACEHOLDER_RE = re.compile(r"\[\[CHART_\d+\]\]")
+
+
+def _build_chart_paragraph(
+    article_id: str, idx: int, placeholder_id: str,
+    placeholder_map: dict, html_escape_fn,
+):
+    """根据 chart_images 元数据构造一个 chart 段 dict"""
+    info = placeholder_map.get(placeholder_id, {}) or {}
+    img_path = (info.get("path") or "").strip()
+    caption = (info.get("caption") or "").strip()
+    alt = (info.get("alt") or "").strip()
+    safe_alt = html_escape_fn(alt, quote=True)
+    safe_caption = html_escape_fn(caption, quote=True)
+
+    figure_parts = [
+        f'<figure class="chart-figure" data-chart-id="{placeholder_id}">',
+        f'<img src="{html_escape_fn(img_path, quote=True)}" alt="{safe_alt}" loading="lazy" decoding="async">',
+    ]
+    if safe_caption:
+        figure_parts.append(f'<figcaption>{safe_caption}</figcaption>')
+    figure_parts.append('</figure>')
+
+    return {
+        "para_id": f"{article_id}_p{idx + 1}",
+        "en_html": "".join(figure_parts),
+        "zh_text": "",
+        "is_chart": True,
+        "chart_id": placeholder_id,
+    }
+
+
+def _split_block_by_chart(
+    article_id: str, idx: int, block_html: str,
+    placeholder_map: dict, html_escape_fn,
+) -> list:
+    """把 <p>...[[CHART_1]]...</p> 切成: 文本段 / chart段 / 文本段 / ...
+
+    - 文本部分: 把占位符位置替换为空格, 简化成 <p>escaped(text)</p>
+    - chart 部分: 用 _build_chart_paragraph 构造
+    返回: 新的段列表 (idx 已内部递增, 外部不要再 idx+1)
+    """
+    # 提取块级标签与 inner 内容
+    m = re.match(r'<(p|h[1-6])(\s[^>]*)?>([\s\S]*?)</\1>', block_html.strip(), re.IGNORECASE)
+    if not m:
+        # 兜底: 当作普通段处理
+        return [{
+            "para_id": f"{article_id}_p{idx + 1}",
+            "en_html": block_html.strip(),
+            "zh_text": "",
+            "is_chart": False,
+        }]
+    tag_name = m.group(1).lower()
+    inner = m.group(3)
+
+    # 找所有占位符位置
+    ph_matches = list(_CHART_PLACEHOLDER_RE.finditer(inner))
+    if not ph_matches:
+        return [{
+            "para_id": f"{article_id}_p{idx + 1}",
+            "en_html": block_html.strip(),
+            "zh_text": "",
+            "is_chart": False,
+        }]
+
+    cursor = 0
+    out = []
+    local_idx = idx
+    for ph in ph_matches:
+        # 占位符前的 inner 文本
+        text_before = inner[cursor:ph.start()].strip()
+        if text_before:
+            safe = html_escape_fn(text_before, quote=False)
+            out.append({
+                "para_id": f"{article_id}_p{local_idx + 1}",
+                "en_html": f"<{tag_name}>{safe}</{tag_name}>",
+                "zh_text": "",
+                "is_chart": False,
+            })
+            local_idx += 1
+        # 占位符段
+        out.append(_build_chart_paragraph(
+            article_id, local_idx, ph.group(0), placeholder_map, html_escape_fn,
+        ))
+        local_idx += 1
+        cursor = ph.end()
+    text_after = inner[cursor:].strip()
+    if text_after:
+        safe = html_escape_fn(text_after, quote=False)
+        out.append({
+            "para_id": f"{article_id}_p{local_idx + 1}",
+            "en_html": f"<{tag_name}>{safe}</{tag_name}>",
+            "zh_text": "",
+            "is_chart": False,
+        })
+        local_idx += 1
+    return out
 
 
 def html_escape(s: str, quote: bool = True) -> str:
