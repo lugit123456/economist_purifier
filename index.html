@@ -11,7 +11,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="frontend/assets/style.css">
+    <!-- 发布新版本时同步更新本地静态资源版本号 -->
+    <link rel="stylesheet" href="frontend/assets/style.css?v=20260721.1">
 </head>
 <body>
 
@@ -64,19 +65,19 @@
     <!-- ========== View 2: 二级下钻阅读区 ========== -->
     <main id="view-issue" class="view view-issue">
         <div class="issue-toolbar">
-            <button class="btn-back" id="btn-back" aria-label="返回封面墙">
-                <span class="btn-back-icon">←</span>
-                <span>返回封面墙</span>
-            </button>
-            <h2 class="issue-toolbar-title" id="current-title-zh"></h2>
-            <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="切换文章目录" aria-expanded="false">
-                <span class="mobile-nav-icon">☰</span>
-                <span class="mobile-nav-label">目录</span>
-            </button>
-            <div class="issue-toolbar-meta">
-                <span class="issue-id" id="issue-id-label"></span>
+            <nav class="issue-breadcrumb" aria-label="当前位置">
+                <button class="issue-home-link" id="btn-back" type="button" aria-label="返回封面墙">
+                    <span class="issue-home-icon" aria-hidden="true">←</span>
+                    <span>返回封面墙</span>
+                </button>
+                <span class="issue-breadcrumb-separator" aria-hidden="true">/</span>
                 <span class="issue-date" id="issue-date-label"></span>
-            </div>
+            </nav>
+            <button class="mobile-nav-toggle" id="mobile-nav-toggle" data-toc-trigger aria-label="切换文章目录" aria-expanded="false">
+                <span class="mobile-nav-icon">☰</span>
+                <span class="mobile-nav-label">本期目录</span>
+            </button>
+            <span class="issue-id" id="issue-id-label"></span>
         </div>
 
         <div class="issue-body">
@@ -115,6 +116,7 @@
                 </div>
                 <div class="article-header" id="article-header">
                     <span class="article-section" id="current-section"></span>
+                    <h2 class="article-title-zh" id="current-title-zh"></h2>
                     <h3 class="article-title-en" id="current-title-en"></h3>
                 </div>
 
@@ -158,19 +160,54 @@
                         -->
                     </div>
                 </div>
+
+                <!-- 文章级导航: 跟随正文结束，避免与“上一期/下一期”混淆 -->
+                <nav class="article-pagination" aria-label="本期文章导航">
+                    <button class="article-pagination-button article-nav-prev" id="article-nav-prev" type="button">
+                        <span class="article-pagination-direction">← 上一篇文章</span>
+                        <span class="article-pagination-title" id="article-nav-prev-title">已是本期第一篇</span>
+                    </button>
+                    <button class="article-pagination-button article-nav-next" id="article-nav-next" type="button">
+                        <span class="article-pagination-direction">下一篇文章 →</span>
+                        <span class="article-pagination-title" id="article-nav-next-title">已是本期最后一篇</span>
+                    </button>
+                </nav>
+
+                <!-- 手机端文章末尾目录入口 -->
+                <button class="article-bottom-toc" id="article-bottom-toc" data-toc-trigger type="button"
+                        aria-label="查看本期目录" aria-expanded="false">
+                    <span class="article-bottom-toc-icon" aria-hidden="true">☰</span>
+                    <span class="article-bottom-toc-copy">
+                        <strong>查看本期目录</strong>
+                        <span id="article-bottom-toc-count">快速选择本期其他文章</span>
+                    </span>
+                    <span class="article-bottom-toc-arrow" aria-hidden="true">›</span>
+                </button>
             </section>
         </div>
-
-        <!-- 文章上一篇 / 下一篇 FAB (移动端) -->
-        <button class="article-nav-fab article-nav-prev" id="article-nav-prev" aria-label="上一篇" title="上一篇">
-            <span class="article-nav-icon">◀</span>
-            <span class="article-nav-label">上一篇</span>
-        </button>
-        <button class="article-nav-fab article-nav-next" id="article-nav-next" aria-label="下一篇" title="下一篇">
-            <span class="article-nav-label">下一篇</span>
-            <span class="article-nav-icon">▶</span>
-        </button>
     </main>
+
+    <!-- 阅读辅助工具: 仅保留返回顶部 -->
+    <div class="reading-tools" aria-label="阅读工具">
+        <button class="reading-tool reading-tool-top" id="back-to-top" type="button" aria-label="返回文章顶部" title="返回文章顶部">
+            <span class="reading-tool-icon" aria-hidden="true">↑</span>
+            <span class="reading-tool-label">顶部</span>
+        </button>
+    </div>
+
+    <!-- 目录底部弹层 (从底部滑出, 显示本期所有文章) -->
+    <div class="toc-sheet" id="toc-sheet" hidden>
+        <div class="toc-sheet-backdrop" id="toc-sheet-backdrop"></div>
+        <div class="toc-sheet-panel" role="dialog" aria-label="本期目录">
+            <div class="toc-sheet-header">
+                <span class="toc-sheet-title">本期目录</span>
+                <button class="toc-sheet-close" id="toc-sheet-close" type="button" aria-label="关闭">×</button>
+            </div>
+            <div class="toc-sheet-body" id="toc-sheet-body">
+                <!-- JS 注入 renderArticleList 渲染的文章列表 -->
+            </div>
+        </div>
+    </div>
 
     <!-- 图片灯箱 -->
     <div class="lightbox" id="lightbox" hidden>
@@ -192,9 +229,9 @@
     <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
 
     <!-- 数据库 (由 kb_agent 自动生成) -->
-    <script src="frontend/database.js"></script>
+    <script src="frontend/database.js?v=20260721.1"></script>
 
     <!-- 应用逻辑 -->
-    <script src="frontend/assets/app.js"></script>
+    <script src="frontend/assets/app.js?v=20260721.1"></script>
 </body>
 </html>

@@ -54,6 +54,21 @@
         return t.toLocaleDateString('zh-CN', opts);
     }
 
+    function scrollDocumentToTop() {
+        const forceTop = () => {
+            const scrollingElement = document.scrollingElement || document.documentElement;
+            if (scrollingElement) scrollingElement.scrollTop = 0;
+            document.documentElement.scrollTop = 0;
+            document.body.scrollTop = 0;
+            window.scrollTo(0, 0);
+        };
+
+        forceTop();
+        requestAnimationFrame(forceTop);
+        setTimeout(forceTop, 120);
+        setTimeout(forceTop, 320);
+    }
+
     // ---------- 路由 ----------
 
     function parseHash() {
@@ -283,11 +298,37 @@
         // 中英双栏对照阅读器
         renderBilingual(article);
 
+        // ★ 绑图点击 → 灯箱 (单图放大, 桌面 + 移动)
+        bindImageZoom(article);
+
         // 重置滚动
         summaryEl.scrollTop = 0;
 
-        // FAB 上一篇/下一篇 状态更新
-        if (typeof updateArticleNavFabState === 'function') updateArticleNavFabState();
+        // 更新正文末尾的上一篇/下一篇文章导航
+        updateArticleNavigation();
+    }
+
+    // 单图点击放大 (复用现有灯箱, 单图模式)
+    function bindImageZoom(_article) {
+        const view = document.getElementById('view-issue');
+        if (!view) return;
+        // 已经绑定过的不重复绑 (用 WeakSet 标记)
+        view.querySelectorAll('img').forEach(img => {
+            if (img.dataset.zoomBound === '1') return;
+            img.dataset.zoomBound = '1';
+            // cursor: zoom-in 是桌面端的视觉提示
+            img.style.cursor = 'zoom-in';
+            img.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // ★ 单图模式: 数组里只放一张, prev/next 自动隐藏
+                const src = img.currentSrc || img.src;
+                const alt = img.alt || '';
+                const figcaption = img.closest('figure')?.querySelector('figcaption')?.textContent?.trim() || '';
+                const caption = figcaption || alt;
+                openLightbox([{ path: src, caption: caption }], 0);
+            });
+        });
     }
 
     // ============================================================
@@ -337,10 +378,17 @@
         const path = typeof it === 'string' ? it : it.path;
         const caption = typeof it === 'string' ? '' : (it.caption || '');
         document.getElementById('lightbox-image').src = path;
-        document.getElementById('lightbox-image').alt = caption || 'Indicator';
+        document.getElementById('lightbox-image').alt = caption || '图片';
         document.getElementById('lightbox-caption').textContent = caption;
+        const total = lightboxState.images.length;
         document.getElementById('lightbox-counter').textContent =
-            `${lightboxState.idx + 1} / ${lightboxState.images.length}`;
+            total > 1 ? `${lightboxState.idx + 1} / ${total}` : '';
+        // ★ 单图模式 (普通文章里的 img): 隐藏 prev/next 按钮
+        const multi = total > 1;
+        const prevBtn = document.getElementById('lightbox-prev');
+        const nextBtn = document.getElementById('lightbox-next');
+        if (prevBtn) prevBtn.style.display = multi ? '' : 'none';
+        if (nextBtn) nextBtn.style.display = multi ? '' : 'none';
     }
 
     function lightboxPrev() {
@@ -392,6 +440,10 @@
         // 文章数统计
         const articleCount = (issue.articles && issue.articles.length) || 0;
         document.getElementById('article-count').textContent = articleCount + ' 篇';
+        const bottomToc = document.getElementById('article-bottom-toc');
+        const bottomTocCount = document.getElementById('article-bottom-toc-count');
+        if (bottomTocCount) bottomTocCount.textContent = `本期共 ${articleCount} 篇文章`;
+        if (bottomToc) bottomToc.setAttribute('aria-label', `查看本期目录，共 ${articleCount} 篇文章`);
 
         // 文章列表
         const list = document.getElementById('article-list');
@@ -416,7 +468,7 @@
         }
 
         if (target) {
-            // 先设 state, 这样 renderArticle 内部的 updateArticleNavFabState 能读到正确的 articleId
+            // 先设 state，让 renderArticle 能读取正确的上一篇/下一篇文章
             state.currentArticleId = target.id;
             renderArticle(target);
             // 更新 URL (若缺 articleId)
@@ -437,8 +489,8 @@
             }, 50);
         }
 
-        // 滚动到顶部
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // hash 切换文章时浏览器会保留旧滚动位置，渲染后强制回到页面顶端。
+        scrollDocumentToTop();
     }
 
     // ---------- 路由分发 ----------
@@ -452,10 +504,10 @@
             switchView('view-wall', () => renderWall());
         }
         document.body.classList.toggle('in-issue', !!issueId);
-        updateArticleNavFabState();
+        updateArticleNavigation();
     }
 
-    // ---------- 文章上一篇 / 下一篇 FAB ----------
+    // ---------- 文章上一篇 / 下一篇导航 ----------
 
     function navigateToArticle(articleId) {
         const issueId = state.currentIssueId;
@@ -463,45 +515,172 @@
         navigate(`/issue/${issueId}/${articleId}`);
     }
 
-    function updateArticleNavFabState() {
+    function updateArticleNavigation() {
         const prevBtn = document.getElementById('article-nav-prev');
         const nextBtn = document.getElementById('article-nav-next');
         if (!prevBtn || !nextBtn) return;
-        const onIssue = !!state.currentIssueId;
+        const onIssue = !!parseHash().issueId;
         const articles = state.currentArticles || [];
         const idx = articles.findIndex(a => a.id === state.currentArticleId);
         const hasPrev = idx > 0;
         const hasNext = idx >= 0 && idx < articles.length - 1;
+
+        const prevArticle = hasPrev ? articles[idx - 1] : null;
+        const nextArticle = hasNext ? articles[idx + 1] : null;
+        const prevTitle = document.getElementById('article-nav-prev-title');
+        const nextTitle = document.getElementById('article-nav-next-title');
+
         prevBtn.classList.toggle('is-disabled', !hasPrev);
         nextBtn.classList.toggle('is-disabled', !hasNext);
-        prevBtn.classList.toggle('is-visible', onIssue && hasPrev);
-        nextBtn.classList.toggle('is-visible', onIssue && hasNext);
+        prevBtn.classList.toggle('is-visible', onIssue);
+        nextBtn.classList.toggle('is-visible', onIssue);
+        prevBtn.disabled = !hasPrev;
+        nextBtn.disabled = !hasNext;
+        prevBtn.setAttribute('aria-label', hasPrev
+            ? `上一篇文章：${prevArticle.title_zh || prevArticle.title || ''}`
+            : '已是本期第一篇文章');
+        nextBtn.setAttribute('aria-label', hasNext
+            ? `下一篇文章：${nextArticle.title_zh || nextArticle.title || ''}`
+            : '已是本期最后一篇文章');
+        if (prevTitle) {
+            prevTitle.textContent = hasPrev
+                ? (prevArticle.title_zh || prevArticle.title || '上一篇文章')
+                : '已是本期第一篇';
+        }
+        if (nextTitle) {
+            nextTitle.textContent = hasNext
+                ? (nextArticle.title_zh || nextArticle.title || '下一篇文章')
+                : '已是本期最后一篇';
+        }
     }
 
-    function setupArticleNavFab() {
+    function setupArticleNavigation() {
         const prevBtn = document.getElementById('article-nav-prev');
         const nextBtn = document.getElementById('article-nav-next');
         if (!prevBtn || !nextBtn) return;
-        prevBtn.addEventListener('click', () => {
-            // 切文章前先停掉朗读 (TTS.stop() 会重置按钮图标/文字)
+
+        // 切文章前先停掉朗读 (TTS.stop() 会重置按钮图标/文字)
+        const stopTtsIfActive = () => {
             if (typeof TTS !== 'undefined' && TTS.getState && TTS.getState() !== 'idle') {
                 TTS.stop();
             }
+        };
+
+        prevBtn.addEventListener('click', () => {
+            stopTtsIfActive();
             const articles = state.currentArticles || [];
             const idx = articles.findIndex(a => a.id === state.currentArticleId);
             if (idx > 0) navigateToArticle(articles[idx - 1].id);
         });
         nextBtn.addEventListener('click', () => {
-            // 切文章前先停掉朗读
-            if (typeof TTS !== 'undefined' && TTS.getState && TTS.getState() !== 'idle') {
-                TTS.stop();
-            }
+            stopTtsIfActive();
             const articles = state.currentArticles || [];
             const idx = articles.findIndex(a => a.id === state.currentArticleId);
             if (idx >= 0 && idx < articles.length - 1) {
                 navigateToArticle(articles[idx + 1].id);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
+        });
+    }
+
+    // ========== TOC 底部弹层 ==========
+    function openTocSheet() {
+        const sheet = document.getElementById('toc-sheet');
+        const body = document.getElementById('toc-sheet-body');
+        if (!sheet || !body) return;
+        // 渲染本期文章列表 (复用 renderArticleList)
+        const articles = state.currentArticles || [];
+        body.innerHTML = renderArticleList(articles);
+        // 高亮当前文章
+        const currentId = state.currentArticleId;
+        body.querySelectorAll('.article-item').forEach(item => {
+            if (item.dataset.articleId === currentId) {
+                item.classList.add('is-active');
+                // 滚到可视区
+                setTimeout(() => item.scrollIntoView({ block: 'center', behavior: 'smooth' }), 80);
+            }
+        });
+        // 文章点击 → 跳转 + 关闭弹层
+        body.querySelectorAll('.article-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const aid = item.dataset.articleId;
+                if (!aid || aid === currentId) {
+                    closeTocSheet();
+                    return;
+                }
+                closeTocSheet();
+                const issueId = state.currentIssueId;
+                navigate(`/issue/${issueId}/${aid}`);
+            });
+        });
+        sheet.hidden = false;
+        // 强制 reflow 让 transition 生效
+        void sheet.offsetWidth;
+        sheet.classList.add('is-open');
+        document.querySelectorAll('[data-toc-trigger]').forEach(trigger => {
+            trigger.classList.add('is-active');
+            trigger.setAttribute('aria-expanded', 'true');
+        });
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeTocSheet() {
+        const sheet = document.getElementById('toc-sheet');
+        if (!sheet) return;
+        sheet.classList.remove('is-open');
+        // 等 transition 结束再 hidden
+        setTimeout(() => {
+            if (!sheet.classList.contains('is-open')) {
+                sheet.hidden = true;
+            }
+        }, 300);
+        document.querySelectorAll('[data-toc-trigger]').forEach(trigger => {
+            trigger.classList.remove('is-active');
+            trigger.setAttribute('aria-expanded', 'false');
+        });
+        document.body.style.overflow = '';
+    }
+
+    function setupTocSheet() {
+        const sheet = document.getElementById('toc-sheet');
+        const backdrop = document.getElementById('toc-sheet-backdrop');
+        const closeBtn = document.getElementById('toc-sheet-close');
+        if (!sheet) return;
+        backdrop && backdrop.addEventListener('click', closeTocSheet);
+        closeBtn && closeBtn.addEventListener('click', closeTocSheet);
+        // Esc 关闭
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && sheet.classList.contains('is-open')) {
+                closeTocSheet();
+            }
+        });
+    }
+
+    // ========== 返回文章顶部（滚动一段距离后显示） ==========
+    function setupBackToTop() {
+        const btn = document.getElementById('back-to-top');
+        if (!btn) return;
+
+        const SHOW_AFTER = 520;
+
+        const update = () => {
+            if (!document.body.classList.contains('in-issue')) {
+                btn.classList.remove('is-visible');
+                return;
+            }
+            const scrollTop = window.scrollY || document.documentElement.scrollTop;
+            if (scrollTop > SHOW_AFTER) {
+                btn.classList.add('is-visible');
+            } else {
+                btn.classList.remove('is-visible');
+            }
+        };
+
+        window.addEventListener('scroll', update, { passive: true });
+        window.addEventListener('resize', update);
+        btn.addEventListener('click', () => {
+            btn.classList.remove('is-visible');
+            btn.blur();
+            scrollDocumentToTop();
         });
     }
 
@@ -549,30 +728,22 @@
             });
     }
 
-    // ===== Mobile section nav drawer =====
+    // ===== Mobile issue directory =====
     function setupMobileNavToggle() {
-        const toggle = document.getElementById('mobile-nav-toggle');
-        const nav = document.querySelector('.section-nav');
-        if (!toggle || !nav) return;
+        const triggers = document.querySelectorAll('[data-toc-trigger]');
+        if (!triggers.length) return;
 
-        const setOpen = (open) => {
-            nav.classList.toggle('is-open', open);
-            toggle.classList.toggle('is-active', open);
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        };
-
-        toggle.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const open = !nav.classList.contains('is-open');
-            setOpen(open);
-        });
-
-        // 点击文章后自动收起
-        document.addEventListener('click', (e) => {
-            if (e.target.closest('.article-item') && nav.classList.contains('is-open')) {
-                setOpen(false);
-            }
+        triggers.forEach(trigger => {
+            trigger.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const sheet = document.getElementById('toc-sheet');
+                if (sheet && sheet.classList.contains('is-open')) {
+                    closeTocSheet();
+                } else {
+                    openTocSheet();
+                }
+            });
         });
     }
 
@@ -1096,7 +1267,9 @@
         setupLightbox();
         setupMobileNavToggle();
         setupTtsButtons();
-        setupArticleNavFab();  // 取代 setupMobileNavFab + setupFloatingBack
+        setupArticleNavigation();
+        setupTocSheet();       // 底部目录弹层
+        setupBackToTop();      // 回到顶部按钮
         setupWallSearch();
         setupNavSearch();
 

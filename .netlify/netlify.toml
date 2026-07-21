@@ -34,22 +34,34 @@ Referrer-Policy = "strict-origin-when-cross-origin"
 Permissions-Policy = "geolocation=(), microphone=(), camera=()"
 
 [[headers]]
+for = "/"
+
+[headers.values]
+Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+for = "/*.html"
+
+[headers.values]
+Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
 for = "/frontend/assets/*"
 
 [headers.values]
-Cache-Control = "public, max-age=31536000, immutable"
+Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+for = "/frontend/database.js"
+
+[headers.values]
+Cache-Control = "public, max-age=0, must-revalidate"
 
 [[headers]]
 for = "/frontend/images/*"
 
 [headers.values]
 Cache-Control = "public, max-age=31536000, immutable"
-
-[[headers]]
-for = "/frontend/database.js"
-
-[headers.values]
-Cache-Control = "public, max-age=300, must-revalidate"
 
 [[redirects]]
 from = "/.env"
