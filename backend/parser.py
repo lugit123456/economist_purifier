@@ -79,10 +79,9 @@ _SKIP_SECTION_NAMES = {
 
 # 快讯分类: 只有 Politics / Business 走 "忠实中文翻译" 分支 (不做解读)
 # summary_md = content_raw 的中文翻译
-# 其余板块 (Asia/China/Europe/Finance/Briefing 等) 仍走 4 段式中文解读
-_NEWS_CATEGORIES = {
-    "politics", "business",
-}
+# 快讯分类: 现在为空,  所有板块统一走 4 段式中文解读 (不再区分 Politics/Business)
+#   想恢复区分就把 "politics", "business" 加回去
+_NEWS_CATEGORIES: set[str] = set()
 
 
 def _is_definitely_junk(cleaned_text: str, raw_html: bytes,

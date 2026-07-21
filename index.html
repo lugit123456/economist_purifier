@@ -68,9 +68,6 @@
                 <span class="btn-back-icon">←</span>
                 <span>返回封面墙</span>
             </button>
-            <button class="tts-voice-btn" id="tts-voice-settings" aria-label="朗读音色设置" title="朗读音色设置">
-                <span>🔧</span><span class="tts-voice-btn-label">音色</span>
-            </button>
             <h2 class="issue-toolbar-title" id="current-title-zh"></h2>
             <button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-label="切换文章目录" aria-expanded="false">
                 <span class="mobile-nav-icon">☰</span>
@@ -79,25 +76,6 @@
             <div class="issue-toolbar-meta">
                 <span class="issue-id" id="issue-id-label"></span>
                 <span class="issue-date" id="issue-date-label"></span>
-            </div>
-        </div>
-
-        <!-- 音色选择面板 (默认展开, 一次看见所有选项) -->
-        <div class="tts-voice-panel" id="tts-voice-panel">
-            <div class="tts-voice-panel-inner">
-                <div class="tts-voice-panel-row">
-                    <label class="tts-voice-label">中文 voice</label>
-                    <select class="tts-voice-select" id="tts-voice-zh" data-lang="zh"></select>
-                </div>
-                <div class="tts-voice-panel-row">
-                    <label class="tts-voice-label">英文 voice</label>
-                    <select class="tts-voice-select" id="tts-voice-en" data-lang="en"></select>
-                </div>
-                <div class="tts-voice-panel-hint">
-                    选择感觉最清楚的音色。系统装的 voice 越多, 选项越多;
-                    若列表为空, 请到 系统设置 → 辅助功能 → 语音 → 添加中文/英文语音包 后刷新页面。
-                </div>
-                <button class="tts-voice-close" id="tts-voice-close" type="button">关闭</button>
             </div>
         </div>
 

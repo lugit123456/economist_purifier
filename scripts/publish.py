@@ -30,19 +30,30 @@ GitHub 模式 (兼容旧流程):
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+try:
+    from dotenv import load_dotenv
+    _env_file = ROOT / '.env'
+    if _env_file.exists():
+        load_dotenv(_env_file)
+except ImportError:
+    pass  # 没有 dotenv 也能跑, 但要从 shell 导出环境变量
 
-def run(cmd: list[str], check=True, cwd=None, capture=False) -> subprocess.CompletedProcess:
+
+def run(cmd: list[str], check=True, cwd=None, capture=False, env=None) -> subprocess.CompletedProcess:
     """执行 shell 命令"""
     print(f'  $ {" ".join(cmd)}')
     result = subprocess.run(
         cmd, cwd=cwd or ROOT,
-        capture_output=capture, text=True
+        capture_output=capture, text=True,
+        env=env,
     )
     if check and result.returncode != 0:
         if capture and result.stderr:
@@ -91,25 +102,43 @@ def step_commit():
     return True
 
 
-def step_push():
-    """
-    部署分发: 自动检测走 Netlify CLI 直推 还是 git push
-    优先检测 NETLIFY_AUTH_TOKEN + NETLIFY_SITE_ID 环境变量
-    """
-    if _netlify_env_ready():
-        _deploy_to_netlify()
-    else:
-        _push_to_git()
-
-
 def _netlify_env_ready() -> bool:
     """检查 Netlify CLI 直推所需的环境变量是否就绪"""
     return bool(os.getenv('NETLIFY_AUTH_TOKEN', '').strip()
                 and os.getenv('NETLIFY_SITE_ID', '').strip())
 
 
+# Netlify 部署需要的所有文件 (白名单, 不在列表里的绝不上传)
+_NETLIFY_DEPLOY_FILES = [
+    'index.html',
+    '_redirects',
+    'netlify.toml',
+    'frontend',         # 含 database.js + assets/ + images/
+]
+
+
+def _stage_for_netlify() -> Path:
+    """
+    复制白名单文件到临时 staging 目录, Netlify 只从这个目录部署
+
+    这样从源头上就避免了 output/ backend/ raw/ scripts/ .env state.db 等敏感/本地产物
+    被推到 Netlify, 完全不依赖 .netlifyignore 是否生效
+    """
+    stage = Path(tempfile.mkdtemp(prefix='netlify-stage-', dir='/tmp'))
+    for name in _NETLIFY_DEPLOY_FILES:
+        src = ROOT / name
+        dst = stage / name
+        if src.is_dir():
+            shutil.copytree(src, dst)
+        elif src.exists():
+            shutil.copy2(src, dst)
+        else:
+            print(f'  ⚠️  跳过 {name} (本地不存在)')
+    return stage
+
+
 def _deploy_to_netlify():
-    """用 Netlify CLI 直推整个项目根到生产环境"""
+    """用 Netlify CLI 直推 staging 目录到生产环境"""
     print('\n📤 Step 3/3: 部署到 Netlify (直推模式, 跳过 GitHub) ...')
 
     # 检查 netlify CLI 是否可用
@@ -120,17 +149,33 @@ def _deploy_to_netlify():
         print('     登录: netlify login  (或在 .env 配 NETLIFY_AUTH_TOKEN)')
         sys.exit(1)
 
-    auth_token = os.getenv('NETLIFY_AUTH_TOKEN', '').strip()
     site_id = os.getenv('NETLIFY_SITE_ID', '').strip()
+    auth_token = os.getenv('NETLIFY_AUTH_TOKEN', '').strip()
 
-    # netlify deploy --prod --dir=. --auth-token=... --site=...
-    run([
-        'netlify', 'deploy',
-        '--prod',
-        '--dir=.',
-        f'--auth-token={auth_token}',
-        f'--site={site_id}',
-    ])
+    # ★ 关键: 新版 netlify-cli (>=10) 不再支持 --auth-token,
+    #   改成 --auth (空格分隔) 或直接靠 NETLIFY_AUTH_TOKEN 环境变量
+    #   用 env var 方式最稳, 跨版本都通
+    env = os.environ.copy()
+    env['NETLIFY_AUTH_TOKEN'] = auth_token
+
+    # 先建 staging 目录, 只放白名单文件
+    print('  📦 构建 staging 目录 (白名单文件)...')
+    stage = _stage_for_netlify()
+    print(f'     {stage}')
+
+    try:
+        run(
+            [
+                'netlify', 'deploy',
+                '--prod',
+                f'--dir={stage}',
+                f'--site={site_id}',
+            ],
+            env=env,
+        )
+    finally:
+        # 清理 staging (无论成功失败都删)
+        shutil.rmtree(stage, ignore_errors=True)
 
     print('\n✅ Netlify 部署完成!')
     print('   注: 本次直推覆盖了 Netlify 上现有版本, 但旧版会继续服务直到原子切换完成')

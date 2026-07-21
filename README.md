@@ -156,19 +156,15 @@ python3 -m http.server 8000
 │         == 板块名/短文 < 300 字等                  │
 │  • 识别:Cartoon → 提取漫画图                       │
 │  • 识别:Indicators → 提取所有图表图                │
-│  • 分类:Politics/Business → news(快讯)             │
-│          其他板块 → analysis(中文解读)             │
+│  • 分类:所有板块 → analysis(统一 4 段式解读)        │
 └────────┬─────────────────────────────────────────┘
          │ 标准化 issue_data
          ↓
 ┌──────────────────────────────────────────────────┐
 │ compiler.py                                       │
 │  • asyncio.Semaphore(8) 并发                      │
-│  • news 类 (Politics/Business):                    │
-│      → NEWS_TRANSLATION_PROMPT 忠实中文翻译         │
-│      → 失败自动降级到 _translate_title_only          │
-│  • analysis 类 (其他板块):                         │
-│      → SYSTEM_PROMPT 4 段式中文解读                │
+│  • 所有板块统一 analysis 路径:                       │
+│      → USER_PROMPT_TEMPLATE 4 段式中文解读          │
 │  • 三级错误处理:                                    │
 │      1) 瞬时错误(timeout/限流) → 重试 3 次          │
 │      2) 永久错误(422/JSON) → 跳过重试直接降级        │
@@ -257,21 +253,14 @@ type Article = {
 (基于事实延伸,不可编造新数据)
 ```
 
-### news 类(Politics/Business 忠实翻译)
-
-```markdown
-### 🌍 Politics · 忠实中文翻译
-> 下方为英文原文的中文翻译 (按英文语义直译, 不做解读)。
-
----
-[LLM 翻译的中文全文]
+> 所有板块(Leaders / Politics / Business / Asia / China / Europe …) 统一走上面这套 4 段式解读, 不再做 Politics/Business 快讯。
 ```
 
 ### news 类降级后(LLM 全文翻译失败时)
 
 ```markdown
 ### 🌍 Politics · 板块快讯
-> ⚠️ LLM 全文翻译暂不可用 (内容审核拦截或超时), 仅完成标题翻译。
+> ⚠️ LLM 全文解读暂不可用 (内容审核拦截或超时), 已降级。
 
 ---
 [英文原文备份]

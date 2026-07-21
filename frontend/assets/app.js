@@ -925,7 +925,15 @@
                 utter.onpause = () => { state = 'paused'; };
                 utter.onresume = () => { state = 'playing'; };
                 utter.onend = () => playChunk(idx + 1);
-                utter.onerror = () => stop();
+                utter.onerror = (e) => {
+                    console.warn('TTS chunk onerror', e);
+                    if (e && e.error && e.error !== 'interrupted' && e.error !== 'canceled') {
+                        showTip('朗读失败 (' + e.error + ')。\n'
+                            + '可能原因: 浏览器 TTS 引擎未挂载 / 系统语音包缺失。\n'
+                            + '建议: 系统设置 → 语言 → 添加中文语音包后刷新。');
+                    }
+                    stop();
+                };
                 currentUtter = utter;
                 try {
                     synth.speak(utter);
@@ -938,10 +946,9 @@
 
             playChunk(0);
 
-            if (!voice) {
-                const langName = lang.startsWith('zh') ? '中文' : '英文';
-                showTip(`未检测到${langName} TTS 语音包, 将使用默认语音。\n请到 系统设置 → 语言 → 添加${langName}语音后刷新。`);
-            }
+            // 不再搞"1.5 秒静音检测"了 — Chrome Android 的 synth.speaking 状态不稳定,
+            //   这个判断会产生误报 (明明有声音, 1.5s 后却被提示"引擎未挂载").
+            //   只靠 onerror 和同步抛错来检测失败, 浏览器自己说了算, 稳定.
         }
 
         // 列出指定语言的可用 voice, 给上层 voice picker 用
@@ -955,6 +962,12 @@
 
         function supported() {
             return !!synth;
+        }
+
+        function hasAnyVoice() {
+            if (!synth) return false;
+            if (!voicesCache.length) loadVoices();
+            return voicesCache.length > 0;
         }
 
         function tipElement() {
@@ -989,7 +1002,7 @@
         }
 
         return { speak, stop, pause, resume, getState, getCurrentBtn: () => currentBtn,
-            supported, showTip, voicesReady: () => voicesReady,
+            supported, hasAnyVoice, showTip, voicesReady: () => voicesReady,
             listVoices, savePref, getPref: () => pref };
     })();
 
@@ -1035,9 +1048,13 @@
             if (!btn) return;
             btn.addEventListener('click', () => {
                 if (!TTS.supported()) {
-                    TTS.showTip('此浏览器不支持 Web Speech API');
+                    TTS.showTip('此浏览器不支持 Web Speech API。\n'
+                        + '请用 Chrome / Edge / Safari / UC 等现代浏览器打开本站。');
                     return;
                 }
+                // ★ 去掉 hasAnyVoice() 预检 — 改成"先尝试 speak, 再看 onerror"
+                //   UC / 小米 / 部分国产浏览器的 TTS 引擎不走 getVoices() 接口
+                //   预检 voices 列表会把它们误杀, 让用户失去可用引擎
                 const s = TTS.getState();
                 // paused → 继续 (按按钮的当前 text 判断, 因为 paused 时 onstart 不会重跑)
                 if (s === 'paused' && btn === TTS.getCurrentBtn()) {
@@ -1060,53 +1077,6 @@
         });
     }
 
-    function setupTtsVoicePanel() {
-        const settingsBtn = document.getElementById('tts-voice-settings');
-        const panel = document.getElementById('tts-voice-panel');
-        const closeBtn = document.getElementById('tts-voice-close');
-        const selZh = document.getElementById('tts-voice-zh');
-        const selEn = document.getElementById('tts-voice-en');
-        if (!settingsBtn || !panel) return;
-
-        function populate() {
-            if (!selZh || !selEn) return;
-            const zh = TTS.listVoices('zh');
-            const en = TTS.listVoices('en');
-            selZh.innerHTML = '<option value="">(自动选择最佳)</option>' +
-                zh.map(v => `<option value="${escapeAttr(v.name)}">${escapeHtml(v.name)} (${v.lang})</option>`).join('');
-            selEn.innerHTML = '<option value="">(自动选择最佳)</option>' +
-                en.map(v => `<option value="${escapeAttr(v.name)}">${escapeHtml(v.name)} (${v.lang})</option>`).join('');
-            const cur = TTS.getPref();
-            selZh.value = cur.voiceZh || '';
-            selEn.value = cur.voiceEn || '';
-        }
-
-        settingsBtn.addEventListener('click', () => {
-            populate();
-            panel.hidden = !panel.hidden;
-        });
-        closeBtn && closeBtn.addEventListener('click', () => { panel.hidden = true; });
-
-        selZh && selZh.addEventListener('change', () => {
-            const cur = TTS.getPref();
-            cur.voiceZh = selZh.value;
-            TTS.savePref();
-        });
-        selEn && selEn.addEventListener('change', () => {
-            const cur = TTS.getPref();
-            cur.voiceEn = selEn.value;
-            TTS.savePref();
-        });
-
-        // voices 是异步加载的, 一旦加载完刷新一次下拉
-        if (window.speechSynthesis) {
-            const refresh = () => { if (!panel.hidden) populate(); };
-            window.speechSynthesis.addEventListener && window.speechSynthesis.addEventListener('voiceschanged', refresh);
-            setTimeout(refresh, 1000);
-            setTimeout(refresh, 3000);
-        }
-    }
-
     function escapeAttr(s) { return String(s || '').replace(/"/g, '&quot;'); }
 
     // ---------- Init ----------
@@ -1126,7 +1096,6 @@
         setupLightbox();
         setupMobileNavToggle();
         setupTtsButtons();
-        setupTtsVoicePanel();
         setupArticleNavFab();  // 取代 setupMobileNavFab + setupFloatingBack
         setupWallSearch();
         setupNavSearch();
